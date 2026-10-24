@@ -35,7 +35,7 @@ const DEPARTMENT_WORDS = new Set([
 export const asciiNamePart = (value: string): string =>
   value
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/\p{M}/gu, "")
     .toLowerCase()
     .replace(/ß/g, "ss")
     .replace(/[^a-z-]/g, "");

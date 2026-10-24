@@ -88,7 +88,7 @@ export const buildEml = (email: RoleEmail, options: EmlOptions): string => {
 export const emlFileName = (companyName: string, email: RoleEmail): string =>
   `${companyName}-${email.role}`
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/\p{M}/gu, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")

@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowRight, KeyRound, Loader2, PlayCircle, Radar } from "lucide-react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowRight, KeyRound, Loader2, PlayCircle, Radar, Search } from "lucide-react";
 
 import ResearchPanel from "@/app/outreach/components/ResearchPanel";
 import RoleSwitcher from "@/app/outreach/components/RoleSwitcher";
@@ -23,7 +24,13 @@ import type {
 
 const SAMPLE_DOMAINS = ["tamtron.fi", "nurminenlogistics.com", "sini.fi"];
 
-export default function OutreachPage() {
+const DOMAIN_LIKE =
+  /^(?:https?:\/\/)?(?:www\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?:\/.*)?$/i;
+
+const looksLikeDomain = (value: string): boolean => DOMAIN_LIKE.test(value.trim());
+
+function OutreachPage() {
+  const router = useRouter();
   const [domain, setDomain] = useState("");
   const [language, setLanguage] = useState<OutreachLanguage>("en");
   const [running, setRunning] = useState(false);
@@ -86,7 +93,7 @@ export default function OutreachPage() {
     setStatuses((prev) => ({ ...prev, [token]: status }));
 
   const run = useCallback(
-    async (target: string, businessId?: string) => {
+    async (target: string, businessId?: string, languageOverride?: OutreachLanguage) => {
       const cleaned = target.trim();
       if (!cleaned) return;
       abortRef.current?.abort();
@@ -102,7 +109,11 @@ export default function OutreachPage() {
         const response = await fetch("/api/outreach", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ domain: cleaned, businessId, language }),
+          body: JSON.stringify({
+            domain: cleaned,
+            businessId,
+            language: languageOverride ?? language,
+          }),
           signal: controller.signal,
         });
 
@@ -145,6 +156,53 @@ export default function OutreachPage() {
     void run(result?.domain ?? domain, candidate.businessId);
   };
 
+  // Hand-off from /outreach/search: ?domain=&businessId=&lang=&auto=1
+  const searchParams = useSearchParams();
+  const handledParams = useRef(false);
+  useEffect(() => {
+    if (handledParams.current) return;
+    handledParams.current = true;
+
+    // ?view=<domain>: reopen a stored run from history (no new research).
+    const viewDomain = searchParams.get("view") ?? "";
+    if (viewDomain) {
+      setDomain(viewDomain);
+      fetch(`/api/outreach/result?domain=${encodeURIComponent(viewDomain)}`)
+        .then(async (response) => {
+          const payload = (await response.json()) as { result?: OutreachResult; error?: string };
+          if (payload.result) {
+            setResult(payload.result);
+            setLanguage(payload.result.language);
+          } else {
+            setError(payload.error ?? "Stored result not found");
+          }
+        })
+        .catch(() => setError("Could not load the stored result."));
+      return;
+    }
+
+    const paramDomain = searchParams.get("domain") ?? "";
+    if (!paramDomain) return;
+    const paramLanguage: OutreachLanguage = searchParams.get("lang") === "fi" ? "fi" : "en";
+    const paramBusinessId = searchParams.get("businessId") ?? undefined;
+    setDomain(paramDomain);
+    setLanguage(paramLanguage);
+    if (searchParams.get("auto") === "1") {
+      void run(paramDomain, paramBusinessId, paramLanguage);
+    }
+  }, [searchParams, run]);
+
+  /** A company name (not a domain) goes to the search page instead. */
+  const submit = (value: string) => {
+    const cleaned = value.trim();
+    if (!cleaned) return;
+    if (looksLikeDomain(cleaned)) {
+      void run(cleaned);
+    } else {
+      router.push(`/outreach/search?q=${encodeURIComponent(cleaned)}`);
+    }
+  };
+
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-8">
       <header className="space-y-1">
@@ -170,13 +228,19 @@ export default function OutreachPage() {
             className="w-full bg-transparent outline-none placeholder:text-velho-muted"
           />
         </label>
+        <a
+          href="/outreach/search"
+          className="inline-flex items-center gap-1 pt-1 text-sm text-sky-300 hover:text-sky-200"
+        >
+          <Search className="h-3.5 w-3.5" aria-hidden /> Don&apos;t know the domain? Search companies by name
+        </a>
       </header>
 
       <form
         className="flex flex-col gap-3 sm:flex-row"
         onSubmit={(event) => {
           event.preventDefault();
-          void run(domain);
+          submit(domain);
         }}
       >
         <input
@@ -286,5 +350,14 @@ export default function OutreachPage() {
         </div>
       )}
     </main>
+  );
+}
+
+/** useSearchParams needs a Suspense boundary for static rendering. */
+export default function OutreachPageWrapper() {
+  return (
+    <Suspense fallback={null}>
+      <OutreachPage />
+    </Suspense>
   );
 }

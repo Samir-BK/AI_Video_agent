@@ -275,3 +275,176 @@ export interface OutreachResult {
   usedFallback: boolean;
   totalDurationMs: number;
 }
+
+/* ------------------------------------------------------------------ */
+/* Search                                                              */
+/* ------------------------------------------------------------------ */
+
+/** Register status relevant for prospecting. */
+export type CompanyStatus = "active" | "liquidation" | "bankruptcy" | "ended";
+
+/** One company from the trade register, as shown in search results. */
+export interface CompanySummary {
+  businessId: string;
+  name: string;
+  /** Earlier official names, newest first. */
+  previousNames: string[];
+  /** Date the current name was registered, when the company has older names. */
+  renamedOn: string | null;
+  city: string | null;
+  businessLineCode: string | null;
+  businessLine: string | null;
+  /**
+   * ISO date the business ID was registered. Companies registered before the
+   * electronic register started all carry 1978-03-15 — see `registeredBefore1978`.
+   */
+  registeredSince: string | null;
+  registeredBefore1978: boolean;
+  /** Website as registered in PRH (often missing). */
+  website: string | null;
+  companyForm: string | null;
+  status: CompanyStatus;
+  /** Public register page (attribution: PRH / YTJ open data, CC BY 4.0). */
+  sourceUrl: string;
+}
+
+export interface CompanySuggestion extends CompanySummary {
+  /** 0–100, how well the name matches the query. */
+  matchScore: number;
+}
+
+export interface CompanySearchResponse {
+  query: string;
+  suggestions: CompanySuggestion[];
+  totalResults: number;
+  /** Set when the register could not be reached. */
+  note?: string;
+}
+
+export interface DomainCheck {
+  domain: string;
+  /** What happened when we checked this candidate. */
+  outcome: "no_dns" | "unreachable" | "name_not_found" | "verified" | "registered";
+}
+
+/**
+ * Website for a company. "registered" = from the trade register;
+ * "verified_guess" = a guessed domain whose homepage contains the company's
+ * legal name or business ID. Never an unverified guess.
+ */
+export interface DomainResolution {
+  businessId: string;
+  domain: string | null;
+  method: "registered" | "verified_guess" | "none";
+  /** Exact text found on the homepage that proves the match. */
+  evidence: string | null;
+  checks: DomainCheck[];
+  durationMs: number;
+}
+
+/* ---------------------------- Criteria search ---------------------------- */
+
+export interface CriteriaRequest {
+  /** Industry group ids (see INDUSTRY_GROUPS) and/or raw TOL codes (3–5 digits). */
+  industries: string[];
+  /** Region id (see REGIONS) — expands to its main towns. */
+  region?: string;
+  /** Extra / alternative towns typed by the operator. */
+  cities?: string[];
+  /** Minimum company age in years (default 10). */
+  minAgeYears?: number;
+  /** M3: only keep companies with an open manual-work job ad. */
+  requireHiring?: boolean;
+  /** M3: only keep companies whose size is known from a sourced quote. */
+  onlyKnownSize?: boolean;
+}
+
+export interface ScoreReason {
+  points: number;
+  reason: string;
+}
+
+export interface ScoredCompany {
+  company: CompanySummary;
+  /** 0–100, deterministic for the same input. */
+  score: number;
+  reasons: ScoreReason[];
+  ageYears: number | null;
+  /** Filled by enrichment (M3). */
+  enrichment?: CompanyEnrichment;
+}
+
+export interface CompanyEnrichment {
+  domain: DomainResolution | null;
+  /** All verified open positions. */
+  hiring: SourcedFact[];
+  /** The subset that is mostly repetitive admin work (Velho's sweet spot). */
+  manualHiring: SourcedFact[];
+  /** Employee count stated on the site or in a job ad, with its quote. */
+  size: { employees: number; fact: SourcedFact } | null;
+  /** The website check ran out of time: unknown, not "no website". */
+  websiteTimedOut?: boolean;
+  status: "pending" | "done" | "timed_out";
+}
+
+export interface ExclusionCount {
+  id: string;
+  label: string;
+  count: number;
+}
+
+export interface CriteriaSearchLogEntry {
+  query: string;
+  ok: boolean;
+  results: number;
+  durationMs: number;
+  note?: string;
+}
+
+export interface CriteriaResult {
+  request: CriteriaRequest;
+  /** Ranked, after exclusions. */
+  companies: ScoredCompany[];
+  scanned: number;
+  excluded: ExclusionCount[];
+  /** True when a limit stopped the scan before all combinations. */
+  truncated: boolean;
+  /** Which limit: the candidate cap or the register-query budget. */
+  truncatedBy?: "candidates" | "queries";
+  queriesRun: number;
+  queriesPlanned: number;
+  log: CriteriaSearchLogEntry[];
+  createdAt: string;
+  durationMs: number;
+  /** Set when the same search was served from the 30-minute cache. */
+  cached?: boolean;
+}
+
+export type CriteriaStreamEvent =
+  | { type: "progress"; message: string; done: number; total: number }
+  | { type: "result"; result: CriteriaResult }
+  | { type: "enriched"; businessId: string; scored: ScoredCompany }
+  | { type: "enrichment_done"; done: number; timedOut: number; durationMs: number }
+  | { type: "error"; message: string };
+
+/* ---------------------------- History search ----------------------------- */
+
+export interface HistoryRow {
+  domain: string;
+  companyName: string;
+  businessId: string | null;
+  createdAt: string;
+  language: OutreachLanguage;
+  sufficiency: Sufficiency;
+  /** Role -> email status for the emails written in that run. */
+  emails: { role: ExecRole; status: RoleEmailStatus; recipient: string | null }[];
+  views: Record<ExecRole, number>;
+  totalViews: number;
+}
+
+export interface HistoryQuery {
+  q?: string;
+  status?: RoleEmailStatus;
+  minViews?: number;
+  sort?: "date" | "views";
+}
