@@ -19,7 +19,8 @@ import CartoonAnimator, {
 } from "@/app/components/CartoonAnimator";
 import { VideoAudioEngine, type AudioBedPhase } from "@/lib/audioEngine";
 import { buildBookingUrl } from "@/lib/booking";
-import { NarrationTrack, splitSentences } from "@/lib/narration";
+import { NarrationTrack } from "@/lib/narration";
+import type { TimedCue } from "@/lib/voiceoverBudget";
 import type {
   BrandPalette,
   VoiceoverProvider,
@@ -50,6 +51,8 @@ const DEFAULT_PALETTE: BrandPalette = {
 const PROVIDER_LABELS: Record<VoiceoverProvider, string> = {
   elevenlabs: "ElevenLabs neural voice",
   openai: "OpenAI neural voice",
+  macos: "Mac narrator",
+  edge: "Microsoft neural narrator",
   groq: "Groq Orpheus voice",
   browser: "Browser voice (add a TTS key for neural)",
 };
@@ -123,14 +126,15 @@ export default function VideoPlayer({
   solution,
 }: VideoPlayerProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const voiceElRef = useRef<HTMLAudioElement | null>(null);
 
   const rafRef = useRef<number | null>(null);
   const startRef = useRef<number>(0);
   /** Elapsed ms at the moment the current play segment began. */
   const offsetRef = useRef<number>(0);
   const lastSyncRef = useRef<number>(0);
-  const spokenSceneRef = useRef<number>(-1);
   const narrationRef = useRef<NarrationTrack | null>(null);
+  const scenesRef = useRef(script.scenes);
   const [voiceProvider, setVoiceProvider] = useState<VoiceoverProvider | null>(
     null,
   );
@@ -175,7 +179,12 @@ export default function VideoPlayer({
 
   const durationMs = Math.max(script.durationSec, 1) * 1000;
   const scenes = script.scenes;
+  scenesRef.current = scenes;
   const elapsedSec = elapsedMs / 1000;
+
+  const sceneAt = (second: number, list: VideoScene[]): VideoScene =>
+    list.find((scene) => second >= scene.startSec && second < scene.endSec) ??
+    list[list.length - 1]!;
 
   const phase = phaseForSecond(elapsedSec, scenes);
 
@@ -186,8 +195,26 @@ export default function VideoPlayer({
     return found ?? scenes[scenes.length - 1]!;
   }, [scenes, elapsedSec]);
 
+  /**
+   * Captions measured from the real clip. Until a scene's audio is ready we
+   * share that scene by word count, which is the same clock the fallback uses.
+   */
+  const [syncedCues, setSyncedCues] = useState<Map<number, TimedCue[]>>(
+    () => new Map(),
+  );
+
   /** Sentence-level subtitles, timed across the whole storyboard. */
-  const captionCues = useMemo(() => buildCaptionCues(scenes), [scenes]);
+  const captionCues = useMemo(() => {
+    const fallback = buildCaptionCues(scenes);
+    if (syncedCues.size === 0) return fallback;
+    return scenes.flatMap((scene) => {
+      const timed = syncedCues.get(scene.id);
+      if (timed && timed.length > 0) return timed;
+      return fallback.filter(
+        (cue) => cue.startSec >= scene.startSec && cue.startSec < scene.endSec,
+      );
+    });
+  }, [scenes, syncedCues]);
 
   /** The one subtitle line that should be on screen right now. */
   const activeCue = useMemo(
@@ -217,11 +244,22 @@ export default function VideoPlayer({
     setVoiceSupported(true);
     // Duck the music bed whenever the narrator is speaking.
     const track = new NarrationTrack({
+      player: voiceElRef.current,
       onVoiceActive: (active) => engineRef.current?.setVoiceActive(active),
+      onSceneCues: (sceneId, cues) => {
+        if (narrationRef.current !== track) return;
+        setSyncedCues((current) => {
+          const next = new Map(current);
+          next.set(sceneId, cues);
+          return next;
+        });
+        setVoiceProvider(track.activeProvider ?? "browser");
+      },
     });
     narrationRef.current = track;
+    setSyncedCues(new Map());
 
-    // Voice every line up front so playback starts without a gap.
+    // One clip per scene, scene 1 first, so play isn't waiting on later beats.
     setVoiceLoading(true);
     void track.preload(scenes).finally(() => {
       if (narrationRef.current !== track) return;
@@ -235,27 +273,8 @@ export default function VideoPlayer({
     };
   }, [scenes]);
 
-  /**
-   * Narrate a scene. When playback lands mid-scene (seek), skip the lines
-   * whose caption window already passed, so voice and subtitles stay in sync.
-   */
-  const speakScene = useCallback(
-    (scene: VideoScene, atSec?: number) => {
-      const track = narrationRef.current;
-      if (!track || isMuted) return;
-      let skip = 0;
-      if (atSec !== undefined && atSec > scene.startSec + 0.25) {
-        const cues = buildCaptionCues([scene]);
-        skip = cues.filter((cue) => cue.endSec <= atSec).length;
-        if (skip >= splitSentences(scene.voiceover).length) return;
-      }
-      void track.playScene(scene, skip);
-    },
-    [isMuted],
-  );
-
   const stopSpeech = useCallback(() => {
-    narrationRef.current?.stop();
+    narrationRef.current?.pause();
     engineRef.current?.setVoiceActive(false);
   }, []);
 
@@ -267,6 +286,7 @@ export default function VideoPlayer({
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
+      narrationRef.current?.pause();
       return;
     }
 
@@ -274,14 +294,20 @@ export default function VideoPlayer({
 
     const loop = (now: number) => {
       const ms = offsetRef.current + (now - startRef.current);
+      const list = scenesRef.current;
 
       if (ms >= durationMs) {
         offsetRef.current = durationMs;
         setElapsedMs(durationMs);
         setIsPlaying(false);
         setHasEnded(true);
-        // Let the narrator finish the closing call to action.
+        narrationRef.current?.pause();
         return;
+      }
+
+      // The picture is the clock. Pull the narrator onto it every frame.
+      if (list.length > 0) {
+        narrationRef.current?.follow(ms / 1000, sceneAt(ms / 1000, list));
       }
 
       // The cartoon layer runs on CSS, so we only synchronize React state.
@@ -301,26 +327,7 @@ export default function VideoPlayer({
         rafRef.current = null;
       }
     };
-  }, [isPlaying, durationMs, stopSpeech]);
-
-  /* ---------------- Voiceover sync ---------------- */
-
-  useEffect(() => {
-    if (!isPlaying) return;
-    if (spokenSceneRef.current === activeScene.id) return;
-
-    const previous = spokenSceneRef.current;
-    spokenSceneRef.current = activeScene.id;
-
-    // Natural hand-off to the next scene: let the narrator finish the line.
-    if (previous === activeScene.id - 1 && !isMuted) {
-      void narrationRef.current?.queueScene(activeScene);
-      return;
-    }
-    // Resume / seek / unmute can land mid-scene: pick narration up from there.
-    const liveMs = offsetRef.current + (performance.now() - startRef.current);
-    speakScene(activeScene, liveMs / 1000);
-  }, [activeScene, isPlaying, isMuted, speakScene]);
+  }, [isPlaying, durationMs]);
 
   /* ---------------- Music + SFX sync ---------------- */
 
@@ -368,45 +375,51 @@ export default function VideoPlayer({
     setAudioActive(true);
   }, [isMuted, phase]);
 
+  const startVoice = useCallback((atMs: number) => {
+    const list = scenesRef.current;
+    if (list.length === 0) return;
+    const atSec = atMs / 1000;
+    narrationRef.current?.begin(sceneAt(atSec, list), atSec);
+  }, []);
+
   const handlePlayPause = useCallback(() => {
-    if (hasEnded) {
-      // Replay from the top.
-      offsetRef.current = 0;
-      spokenSceneRef.current = -1;
-      stungPhaseRef.current = null;
-      setElapsedMs(0);
-      setHasEnded(false);
-      setIsPlaying(true);
-      void startAudio();
+    if (isPlaying && !hasEnded) {
+      offsetRef.current =
+        offsetRef.current + (performance.now() - startRef.current);
+      stopSpeech();
+      engineRef.current?.stop();
+      setAudioActive(false);
+      setIsPlaying(false);
       return;
     }
 
-    setIsPlaying((prev) => {
-      if (prev) {
-        offsetRef.current =
-          offsetRef.current + (performance.now() - startRef.current);
-        stopSpeech();
-        // Resume re-narrates from the paused sentence.
-        spokenSceneRef.current = -1;
-        engineRef.current?.stop();
-        setAudioActive(false);
-        return false;
-      }
-      void startAudio();
-      return true;
-    });
-  }, [hasEnded, startAudio, stopSpeech]);
+    const atMs = hasEnded ? 0 : offsetRef.current;
+    if (hasEnded) {
+      offsetRef.current = 0;
+      startRef.current = performance.now();
+      stungPhaseRef.current = null;
+      setElapsedMs(0);
+      setHasEnded(false);
+    }
+
+    // Voice starts in this click. A frame later is too late — the browser
+    // treats it as not a user gesture and plays nothing.
+    startVoice(atMs);
+    setIsPlaying(true);
+    void startAudio();
+  }, [hasEnded, isPlaying, startAudio, startVoice, stopSpeech]);
 
   const handleRestart = useCallback(() => {
     stopSpeech();
     offsetRef.current = 0;
-    spokenSceneRef.current = -1;
+    startRef.current = performance.now();
     stungPhaseRef.current = null;
     setElapsedMs(0);
     setHasEnded(false);
+    startVoice(0);
     setIsPlaying(true);
     void startAudio();
-  }, [startAudio, stopSpeech]);
+  }, [startAudio, startVoice, stopSpeech]);
 
   const handleSeek = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -423,24 +436,16 @@ export default function VideoPlayer({
       setElapsedMs(target);
       setHasEnded(false);
 
-      // Force the voiceover to re-fire for whichever scene we landed in, and
-      // resync the bed to the beat we jumped into.
+      // The animation clock jumps; the narrator is pulled onto it on the
+      // next frame. While paused, make sure nothing keeps talking.
       const targetSec = target / 1000;
-      const landed = scenes.find(
-        (scene) => targetSec >= scene.startSec && targetSec < scene.endSec,
-      );
-      spokenSceneRef.current = -1;
       stungPhaseRef.current = null;
       engineRef.current?.setPhase(phaseForSecond(targetSec, scenes) as AudioBedPhase);
       engineRef.current?.playTransition();
-      if (isPlaying && landed) {
-        spokenSceneRef.current = landed.id;
-        speakScene(landed, targetSec);
-      } else {
-        stopSpeech();
-      }
+      if (isPlaying) startVoice(target);
+      else stopSpeech();
     },
-    [durationMs, isPlaying, scenes, speakScene, stopSpeech],
+    [durationMs, isPlaying, scenes, startVoice, stopSpeech],
   );
 
   const toggleMute = useCallback(() => {
@@ -448,12 +453,11 @@ export default function VideoPlayer({
       const next = !prev;
       narrationRef.current?.setMuted(next);
       if (next) stopSpeech();
-      // Unmuting picks the narration back up at the current sentence.
-      else spokenSceneRef.current = -1;
+      else if (isPlaying) startVoice(elapsedMs);
       engineRef.current?.setMuted(next);
       return next;
     });
-  }, [stopSpeech]);
+  }, [elapsedMs, isPlaying, startVoice, stopSpeech]);
 
   /* ---------------- Formatting ---------------- */
 
@@ -493,6 +497,16 @@ export default function VideoPlayer({
 
   return (
     <section className="overflow-hidden rounded-2xl border border-velho-line bg-velho-panel/60">
+      {/*
+        Live voiceover element. Must stay in the document (not display:none)
+        so the Play click can unlock it and later frames can keep speaking.
+      */}
+      <audio
+        ref={voiceElRef}
+        preload="auto"
+        playsInline
+        className="pointer-events-none absolute h-px w-px opacity-0"
+      />
       {/* Header */}
       <header className="flex items-center justify-between gap-3 border-b border-velho-line px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
@@ -828,14 +842,8 @@ export default function VideoPlayer({
                   setElapsedMs(scene.startSec * 1000);
                   setHasEnded(false);
                   stungPhaseRef.current = null;
-                  // Narrate the chosen scene from its first line.
-                  if (isPlaying) {
-                    spokenSceneRef.current = scene.id;
-                    speakScene(scene);
-                  } else {
-                    spokenSceneRef.current = -1;
-                    stopSpeech();
-                  }
+                  if (isPlaying) startVoice(scene.startSec * 1000);
+                  else stopSpeech();
                   // Snap the soundtrack to the beat we jumped to.
                   engineRef.current?.setPhase(
                     phaseForSecond(scene.startSec, scenes) as AudioBedPhase,

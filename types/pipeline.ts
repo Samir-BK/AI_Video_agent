@@ -290,12 +290,37 @@ export interface VideoScriptOutput {
 /* ---------------- Neural voiceover contract ---------------- */
 
 /** Which engine voiced a clip. "browser" = speechSynthesis fallback. */
-export type VoiceoverProvider = "elevenlabs" | "openai" | "groq" | "browser";
+export type VoiceoverProvider =
+  | "elevenlabs"
+  | "openai"
+  | "macos"
+  | "edge"
+  | "groq"
+  | "browser";
 
 /** POST /api/voiceover body. */
 export interface VoiceoverRequest {
   /** Spoken words only, one scene's narration. */
   text: string;
+}
+
+/** One recognized word inside a neural clip, in seconds. */
+export interface VoiceoverWord {
+  text: string;
+  start: number;
+  end: number;
+}
+
+/**
+ * Neural clip for a whole scene. `words` is empty when the provider doesn't
+ * report timings; the player then shares the scene by word count.
+ */
+export interface VoiceoverClip {
+  provider: Exclude<VoiceoverProvider, "browser">;
+  mime: string;
+  /** Base64-encoded audio bytes. */
+  audio: string;
+  words: VoiceoverWord[];
 }
 
 /** Returned (as JSON) when no neural voice is available. */

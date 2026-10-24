@@ -194,6 +194,20 @@ body {
   }
 }
 
+@keyframes velho-drift {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(-6deg);
+  }
+  50% {
+    transform: translate(3px, -7px) rotate(8deg);
+  }
+}
+
+.velho-anim-drift {
+  animation: velho-drift 3.6s ease-in-out infinite;
+}
+
 /* SVG transform helpers — rotation/scale must pivot on the element itself. */
 .velho-svg-anim {
   transform-box: fill-box;

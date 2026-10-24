@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "setup:voice": "python3 -m venv .venv-tts && ./.venv-tts/bin/pip install -q edge-tts"
   },
   "dependencies": {
     "framer-motion": "^11.11.17",

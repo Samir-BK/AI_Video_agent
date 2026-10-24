@@ -8,6 +8,8 @@ import type {
   VideoScriptOutput,
 } from "@/types/pipeline";
 import { resolveCartoonStoryboard, VIDEO_DURATION_SEC } from "@/lib/cartoonPresets";
+import { prepareVoiceover } from "@/lib/voiceoverBudget";
+import { personalizeScenes } from "@/lib/cartoonPersonalize";
 
 /* ------------------------------------------------------------------ */
 /* Deterministic helpers                                               */
@@ -119,12 +121,22 @@ type Archetype = {
     symptoms: string[];
     brokenSystems: string[];
     risk: string;
+    /**
+     * Jargon-free restatement of the bottleneck, written for the ear.
+     * The insight copy can be technical; the narrator cannot be, because the
+     * CEO has to follow it in one listening.
+     */
+    problemPlain: string;
   };
   solution: {
     architectureName: (name: string) => string;
     summary: (name: string) => string;
     steps: { title: string; description: (name: string) => string; velhoCapability: string; outcome: string }[];
     integrations: string[];
+    /** Plain-language description of the fix. Must answer the problem above. */
+    solutionPlain: string;
+    /** Short spoken outcome that closes the solution beat. */
+    outcomePlain: string;
   };
   scenes: { title: string; graphicCue: string; icon: string }[];
 };
@@ -159,6 +171,8 @@ const ARCHETYPES: readonly Archetype[] = [
       ],
       brokenSystems: ["Outlook inbox", "Excel takeoff sheets", "Sage/QuickBooks", "Site photo galleries"],
       risk: "Bids slip past the client's decision window and margin erodes on rushed numbers.",
+      problemPlain:
+        "every tender that lands in your inbox is read and re-typed into a spreadsheet by hand, so quotes wait on whoever has spare time.",
     },
     solution: {
       architectureName: (n) => `${n} Bid Engine`,
@@ -185,6 +199,10 @@ const ARCHETYPES: readonly Archetype[] = [
         },
       ],
       integrations: ["Outlook / Microsoft 365", "Sage 200", "Procore", "Dropbox"],
+      solutionPlain:
+        "Velho reads every incoming tender, pulls out the scope, and prices a draft quote for you.",
+      outcomePlain:
+        "Your estimators review a finished quote instead of rebuilding one from scratch.",
     },
     scenes: [
       { title: "Your bids are waiting on a spreadsheet", graphicCue: "Inbox stacking with PDF attachments", icon: "FileStack" },
@@ -221,6 +239,8 @@ const ARCHETYPES: readonly Archetype[] = [
       ],
       brokenSystems: ["Paper job sheets", "WhatsApp group chat", "Legacy TMS", "Accounting export"],
       risk: "Unbilled work, missed SLAs and customer churn to a competitor with live tracking.",
+      problemPlain:
+        "your drivers write each job down on paper, so the office learns hours later and billing waits on a page that never made it back.",
     },
     solution: {
       architectureName: (n) => `${n} Live Ops Layer`,
@@ -247,6 +267,10 @@ const ARCHETYPES: readonly Archetype[] = [
         },
       ],
       integrations: ["Legacy TMS", "Xero", "Twilio SMS", "Google Maps Platform"],
+      solutionPlain:
+        "Velho lets drivers confirm each stop in two taps, then files the report and the invoice the moment the job closes.",
+      outcomePlain:
+        "Dispatch sees the job live, and billing goes out the same day.",
     },
     scenes: [
       { title: "Your dispatch board is a group chat", graphicCue: "Scattered chat bubbles over a route map", icon: "MessageSquareWarning" },
@@ -283,6 +307,8 @@ const ARCHETYPES: readonly Archetype[] = [
       ],
       brokenSystems: ["Google Sheets tracker", "Jira", "HubSpot", "Slack support channels"],
       risk: "Slow activation suppresses net revenue retention and invites churn at renewal.",
+      problemPlain:
+        "every new customer goes live through a spreadsheet checklist, so nobody can see what is stalled and the account waits on a hand-off that never happens.",
     },
     solution: {
       architectureName: (n) => `${n} Activation Engine`,
@@ -309,6 +335,10 @@ const ARCHETYPES: readonly Archetype[] = [
         },
       ],
       integrations: ["Salesforce / HubSpot", "Jira", "Slack", "Snowflake"],
+      solutionPlain:
+        "Velho runs your onboarding playbook automatically, from the closed deal to the first value milestone.",
+      outcomePlain:
+        "Your engineers stop chasing checklists and new accounts go live in days.",
     },
     scenes: [
       { title: "Onboarding lives in a spreadsheet", graphicCue: "Grid of rows, one cell glowing red", icon: "TableProperties" },
@@ -345,6 +375,8 @@ const ARCHETYPES: readonly Archetype[] = [
       ],
       brokenSystems: ["ERP (SAP/Epicor)", "MES", "Paper QC logs", "Whiteboard scheduler"],
       risk: "Rework, missed ship dates and compliance exposure on audited contracts.",
+      problemPlain:
+        "the same order arrives as a document, then gets typed into your ERP, then into the shop floor system, so every re-entry is a chance to get it wrong.",
     },
     solution: {
       architectureName: (n) => `${n} Order Integrity Layer`,
@@ -371,6 +403,10 @@ const ARCHETYPES: readonly Archetype[] = [
         },
       ],
       integrations: ["SAP / Epicor", "Ignition SCADA", "NetSuite", "SharePoint"],
+      solutionPlain:
+        "Velho reads each order once and writes it into every system you run, so the floor works from one clean record.",
+      outcomePlain:
+        "Entry errors stop at intake instead of at the machine.",
     },
     scenes: [
       { title: "The same order, typed three times", graphicCue: "One PO branching into three terminal screens", icon: "CopyX" },
@@ -407,6 +443,8 @@ const ARCHETYPES: readonly Archetype[] = [
       ],
       brokenSystems: ["Outlook", "SharePoint", "Practice management system", "Word templates"],
       risk: "Realization rate slides while utilization looks healthy, hiding margin loss.",
+      problemPlain:
+        "your most senior people lose a third of the week chasing client documents and writing status updates instead of the work clients pay for.",
     },
     solution: {
       architectureName: (n) => `${n} Client Ops Engine`,
@@ -433,6 +471,10 @@ const ARCHETYPES: readonly Archetype[] = [
         },
       ],
       integrations: ["Microsoft 365", "Clio / Practice Engine", "DocuSign", "Xero"],
+      solutionPlain:
+        "Velho chases the documents, drafts the letters, and captures billable time for you.",
+      outcomePlain:
+        "Your partners get the week back, and more of it lands on the invoice.",
     },
     scenes: [
       { title: "Your best people are chasing PDFs", graphicCue: "Senior advisor buried in email threads", icon: "MailSearch" },
@@ -443,27 +485,63 @@ const ARCHETYPES: readonly Archetype[] = [
 ];
 
 const ARCHETYPE_KEYWORDS: Record<string, string[]> = {
-  construction: ["build", "construct", "contract", "trade", "roof", "plumb", "electric", "fitout", "fazer", "property", "homes", "realty"],
+  construction: ["build", "construct", "contract", "trade", "roof", "plumb", "electric", "fitout", "property", "homes", "realty", "infrastructure", "civil"],
   logistics: ["logist", "freight", "transport", "haul", "cargo", "ship", "courier", "deliver", "fleet", "move"],
-  saas: ["tech", "soft", "app", "cloud", "data", "ai", "digital", "saas", "io", "dev", "code", "platform"],
-  manufacturing: ["manu", "industr", "factory", "fabricat", "steel", "plastic", "machine", "component", "supply", "mill"],
+  saas: ["tech", "soft", "app", "cloud", "data", "ai", "digital", "saas", "io", "dev", "code", "platform", "productivity", "collaboration"],
+  manufacturing: ["manu", "industr", "factory", "fabricat", "steel", "plastic", "machine", "component", "supply", "mill", "food", "confection", "bakery", "produc", "furniture", "retail"],
   "professional-services": ["consult", "advis", "legal", "law", "account", "financ", "capital", "audit", "tax", "partner", "group"],
 };
 
-export const selectArchetype = (domain: string): Archetype => {
+/**
+ * Pick the archetype. `hint` (the discovered industry / business model) is
+ * scored first because the domain alone is a poor signal: "skanska.com"
+ * contains no keyword, and short tokens like "ai" match almost anything.
+ */
+export const selectArchetype = (domain: string, hint = ""): Archetype => {
   const seed = hashString(domain);
-  for (const [id, keywords] of Object.entries(ARCHETYPE_KEYWORDS)) {
-    if (keywords.some((keyword) => domain.includes(keyword))) {
-      const match = ARCHETYPES.find((a) => a.id === id);
-      if (match) return match;
+  const score = (text: string): Archetype | null => {
+    const haystack = text.toLowerCase();
+    let best: { id: string; score: number } | null = null;
+    for (const [id, keywords] of Object.entries(ARCHETYPE_KEYWORDS)) {
+      const s = keywords
+        .filter((k) => k.length >= 3 || new RegExp(`\\b${k}\\b`).test(haystack))
+        .reduce((sum, k) => (haystack.includes(k) ? sum + k.length : sum), 0);
+      if (s > 0 && (!best || s > best.score)) best = { id, score: s };
     }
-  }
-  return pick(ARCHETYPES, seed);
+    return best ? (ARCHETYPES.find((a) => a.id === best!.id) ?? null) : null;
+  };
+  return score(hint) ?? score(domain) ?? pick(ARCHETYPES, seed);
 };
 
 /* ------------------------------------------------------------------ */
 /* Mock generators — one per agent                                     */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Whatever earlier agents produced live. When an upstream agent succeeded but
+ * a downstream one fell back, the fallback must still talk about the REAL
+ * company and the REAL problem — otherwise the video narrates a stock
+ * archetype that contradicts the analysis shown beside it.
+ */
+export interface MockContext {
+  discovery?: DiscoveryOutput;
+  problem?: ProblemOutput;
+  solution?: SolutionOutput;
+}
+
+const contextHint = (ctx: MockContext): string =>
+  [ctx.discovery?.industry, ctx.discovery?.businessModel, ctx.discovery?.offerings.join(" ")]
+    .filter(Boolean)
+    .join(" ");
+
+const nameFor = (domain: string, ctx: MockContext): string =>
+  ctx.discovery?.companyName ?? companyNameFromDomain(domain);
+
+/** Lowercase the first letter so a summary reads inside a sentence. */
+const lowerFirst = (value: string): string =>
+  value ? value.charAt(0).toLowerCase() + value.slice(1) : value;
+
+const stripPeriod = (value: string): string => value.trim().replace(/[.!?]+$/, "");
 
 export const mockDiscovery = (domain: string): DiscoveryOutput => {
   const archetype = selectArchetype(domain);
@@ -489,9 +567,9 @@ export const mockDiscovery = (domain: string): DiscoveryOutput => {
   };
 };
 
-export const mockProblem = (domain: string): ProblemOutput => {
-  const archetype = selectArchetype(domain);
-  const companyName = companyNameFromDomain(domain);
+export const mockProblem = (domain: string, ctx: MockContext = {}): ProblemOutput => {
+  const archetype = selectArchetype(domain, contextHint(ctx));
+  const companyName = nameFor(domain, ctx);
   const seed = hashString(domain);
   const severities = ["high", "critical", "high", "medium"] as const;
   const hoursLost = 18 + (seed % 26);
@@ -511,9 +589,9 @@ export const mockProblem = (domain: string): ProblemOutput => {
   };
 };
 
-export const mockSolution = (domain: string): SolutionOutput => {
-  const archetype = selectArchetype(domain);
-  const companyName = companyNameFromDomain(domain);
+export const mockSolution = (domain: string, ctx: MockContext = {}): SolutionOutput => {
+  const archetype = selectArchetype(domain, contextHint(ctx));
+  const companyName = nameFor(domain, ctx);
   const seed = hashString(domain);
   const deltas = ["12x faster", "9x faster", "14x faster", "7x faster"] as const;
 
@@ -537,11 +615,19 @@ export const mockSolution = (domain: string): SolutionOutput => {
   };
 };
 
-export const mockVideoScript = (domain: string): VideoScriptOutput => {
-  const archetype = selectArchetype(domain);
-  const companyName = companyNameFromDomain(domain);
-  const problem = archetype.problem;
+export const mockVideoScript = (
+  domain: string,
+  ctx: MockContext = {},
+): VideoScriptOutput => {
+  const archetype = selectArchetype(domain, contextHint(ctx));
+  const companyName = nameFor(domain, ctx);
   const seed = hashString(domain);
+
+  // Prefer the live diagnosis; the archetype only fills gaps.
+  const liveProblem = ctx.problem ?? mockProblem(domain, ctx);
+  const liveSolution = ctx.solution ?? mockSolution(domain, ctx);
+  const isLiveProblem = Boolean(ctx.problem);
+  const department = liveProblem.department || archetype.problem.department;
 
   // Classify from the company's own symptoms so domain-revealed bottlenecks
   // (e.g. a scheduling pain in a "dental" domain) animate correctly, with the
@@ -550,26 +636,48 @@ export const mockVideoScript = (domain: string): VideoScriptOutput => {
     domain,
     companyName,
     [
-      domain,
-      archetype.industry,
-      problem.title,
-      problem.summary(companyName),
-      problem.department,
-      ...problem.symptoms,
+      liveProblem.title,
+      liveProblem.summary,
+      liveProblem.department,
+      ...liveProblem.symptoms,
+      ctx.discovery?.industry ?? archetype.industry,
     ],
     archetype.bottleneckCategory,
   );
   const category: BottleneckCategory = storyboard.category;
-  const cartoonScenes: CartoonAnimationScene[] = storyboard.scenes;
+  const cartoonScenes: CartoonAnimationScene[] = personalizeScenes(storyboard.scenes, {
+    companyName,
+    problem: liveProblem,
+    solution: liveSolution,
+  });
 
-  const hoursLost = 18 + (seed % 26);
-  const weeksToValue = 2 + (seed % 3);
+  const hoursLost = liveProblem.impact.hoursLostPerWeek || 18 + (seed % 26);
+  const weeksMatch = liveSolution.timeToValue.match(/(\d+)\s*week/i);
+  const weeksToValue = weeksMatch ? Number(weeksMatch[1]) : 2 + (seed % 3);
+
+  // Spoken problem: the archetype's ear-written line only when it IS the
+  // problem; otherwise describe the live diagnosis and its first symptom.
+  const problemSpoken = isLiveProblem
+    ? `${stripPeriod(lowerFirst(liveProblem.summary))}. ` +
+      (liveProblem.symptoms[0] ? `${stripPeriod(liveProblem.symptoms[0])}. ` : "")
+    : `${archetype.problem.problemPlain} `;
+  const solutionSpoken = ctx.solution
+    ? `${stripPeriod(liveSolution.summary)}. ` +
+      (liveSolution.steps[0]?.description ? `${stripPeriod(liveSolution.steps[0].description)}. ` : "")
+    : `${archetype.solution.solutionPlain} ${archetype.solution.outcomePlain} `;
+  const problem = { title: liveProblem.title };
 
   /**
    * Timing is fixed by the cartoon storyboard (45s total):
    *   0-6s    company identity intro
    *   6-24s   cartoonish problem animation
    *   24-45s  cartoonish solution flow + meeting CTA
+   *
+   * Each scene's narration is written as a continuous, spoken piece and then
+   * fitted to its own slot, so the narrator is never still describing the
+   * bottleneck after the video has cut to the fix. The solution beat answers
+   * the problem beat by name, which is what makes the two halves read as one
+   * argument instead of two unrelated claims.
    */
   const scenes = [
     {
@@ -577,7 +685,10 @@ export const mockVideoScript = (domain: string): VideoScriptOutput => {
       startSec: 0,
       endSec: 6,
       title: `Meet ${companyName}`,
-      voiceover: `${companyName}, this one was made just for you. We studied how your ${archetype.problem.department.toLowerCase()} really runs today.`,
+      voiceover: prepareVoiceover(
+        `${companyName}, this video was made for you. It is about how you work.`,
+        6,
+      ),
       overlays: [
         { text: companyName, position: "top" as const, emphasis: "secondary" as const },
         { text: archetype.tagline(companyName), position: "center" as const, emphasis: "primary" as const },
@@ -592,7 +703,12 @@ export const mockVideoScript = (domain: string): VideoScriptOutput => {
       startSec: 6,
       endSec: 24,
       title: archetype.scenes[0]?.title ?? "The bottleneck",
-      voiceover: `Here is the problem. ${problem.summary(companyName)} Right now, ${problem.symptoms[0]?.toLowerCase() ?? "the work happens by hand"}, and ${problem.symptoms[1]?.toLowerCase() ?? "nothing stays in sync"}. Across ${problem.brokenSystems.length} disconnected systems, that adds up to about ${hoursLost} hours every week. Hours your best people should spend growing the business.`,
+      voiceover: prepareVoiceover(
+        `Here is the problem. In your ${department.toLowerCase()} team, ` +
+          problemSpoken +
+          `That is roughly ${hoursLost} hours a week, every week.`,
+        18,
+      ),
       overlays: [
         { text: problem.title, position: "top" as const, emphasis: "secondary" as const },
         { text: cartoonScenes[0]?.text_caption ?? problem.title, position: "center" as const, emphasis: "primary" as const },
@@ -607,10 +723,15 @@ export const mockVideoScript = (domain: string): VideoScriptOutput => {
       startSec: 24,
       endSec: 45,
       title: archetype.scenes[1]?.title ?? "The Velho fix",
-      voiceover: `Now, the solution. Velho built ${archetype.solution.architectureName(companyName)}. ${archetype.solution.steps[0]?.outcome ?? "Intake is automated"}. Then ${archetype.solution.steps[1]?.outcome?.toLowerCase() ?? "every step runs itself"}, and ${archetype.solution.steps[2]?.outcome?.toLowerCase() ?? "results are tracked automatically"}. It plugs into the tools you already use, and goes live in about ${weeksToValue} weeks. Your prototype is ready. Book a fifteen-minute walkthrough with one click, right below this video.`,
+      voiceover: prepareVoiceover(
+        `Now, the solution. ${solutionSpoken}` +
+          `It goes live in about ${weeksToValue} weeks. ` +
+          `Your prototype is ready. Book a fifteen-minute walkthrough right below this video.`,
+        21,
+      ),
       overlays: [
-        { text: archetype.solution.architectureName(companyName), position: "top" as const, emphasis: "secondary" as const },
-        { text: cartoonScenes[1]?.text_caption ?? archetype.solution.steps[0]?.outcome ?? "Automated intake", position: "center" as const, emphasis: "primary" as const },
+        { text: liveSolution.architectureName, position: "top" as const, emphasis: "secondary" as const },
+        { text: cartoonScenes[1]?.text_caption ?? liveSolution.steps[0]?.outcome ?? "Automated intake", position: "center" as const, emphasis: "primary" as const },
         { text: "Book a 15-minute walkthrough", position: "bottom" as const, emphasis: "accent" as const },
       ],
       graphicCue: cartoonScenes[1]?.visual_metaphor ?? "Solution animation",
@@ -633,17 +754,18 @@ export const mockVideoScript = (domain: string): VideoScriptOutput => {
 export const mockEmail = (
   domain: string,
   videoUrl?: string,
+  ctx: MockContext = {},
 ): EmailOutput => {
-  const archetype = selectArchetype(domain);
-  const companyName = companyNameFromDomain(domain);
-  const problem = archetype.problem;
+  const companyName = nameFor(domain, ctx);
+  const problem = ctx.problem ?? mockProblem(domain, ctx);
+  const solution = ctx.solution ?? mockSolution(domain, ctx);
   const url =
     videoUrl ?? `https://velho.ai/v/${encodeURIComponent(domain)}`;
 
   const bodySentences = [
-    `I looked at ${companyName}'s ${archetype.problem.department.toLowerCase()} workflow and found something worth 45 seconds of your time: ${problem.title.toLowerCase()}.`,
-    `Right now ${problem.symptoms[0]?.toLowerCase() ?? "the process runs manually"}, which is quietly costing roughly ${problem.brokenSystems.length * 9} hours a week across the team.`,
-    `We built ${archetype.solution.architectureName(companyName)} — ${archetype.solution.steps[0]?.outcome.toLowerCase() ?? "automated intake"} — and it runs on the systems you already have.`,
+    `I looked at ${companyName}'s ${problem.department.toLowerCase()} workflow and found something worth 45 seconds of your time: ${problem.title.toLowerCase()}.`,
+    `Right now ${lowerFirst(stripPeriod(problem.symptoms[0] ?? "the process runs manually"))}, which is quietly costing roughly ${problem.impact.hoursLostPerWeek} hours a week across the team.`,
+    `We built ${solution.architectureName} — ${lowerFirst(solution.steps[0]?.outcome ?? "automated intake")} — and it runs on the systems you already have.`,
     `I recorded a 45-second walkthrough using ${companyName}'s own workflow, not a generic demo: ${url}`,
   ];
 

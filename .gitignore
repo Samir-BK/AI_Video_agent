@@ -11,3 +11,6 @@ yarn-error.log*
 .env*.local
 next-env.d.ts
 tsconfig.tsbuildinfo
+
+# Local neural voice runtime (npm run setup:voice)
+.venv-tts/
