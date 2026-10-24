@@ -258,7 +258,7 @@ export default function HomePage() {
 
           <div className="hidden items-center gap-2 text-[11px] text-zinc-500 sm:flex">
             <Zap className="h-3 w-3 text-amber-400" strokeWidth={2.5} />
-            20-second personalized video per prospect
+            45-second personalized video per prospect
           </div>
         </div>
       </header>
@@ -289,7 +289,7 @@ export default function HomePage() {
 
             <p className="mx-auto mt-4 max-w-xl text-pretty text-[13.5px] leading-relaxed text-zinc-400 sm:text-[14.5px]">
               Five agents research the company, pinpoint an operational
-              bottleneck, architect the fix, script a 20-second video, and write
+              bottleneck, architect the fix, script a 45-second video, and write
               the CEO email. Enter a domain to run it.
             </p>
 
@@ -320,6 +320,8 @@ export default function HomePage() {
                   <VideoPlayer
                     script={result.videoScript.data}
                     discovery={result.discovery.data}
+                    problem={result.problem.data}
+                    solution={result.solution.data}
                   />
                 </motion.div>
               ) : (

@@ -47,6 +47,20 @@ export class LlmUnavailableError extends Error {
   }
 }
 
+/**
+ * No provider credentials at all. This is deliberately distinct from a failed
+ * call: it is a setup problem with an exact fix, so the pipeline log points the
+ * operator at the file they need to edit instead of a vague "LLM failed".
+ */
+export class LlmNotConfiguredError extends Error {
+  constructor() {
+    super(
+      "No LLM key configured — add GROQ_API_KEY or OPENAI_API_KEY to .env.local and restart the dev server",
+    );
+    this.name = "LlmNotConfiguredError";
+  }
+}
+
 /** Resolve provider config from env, preferring Groq then OpenAI. */
 export const resolveLlmConfig = (): LlmConfig | null => {
   const groqKey = process.env.GROQ_API_KEY?.trim();
@@ -83,7 +97,7 @@ export const callLlm = async (
   config: LlmConfig | null = resolveLlmConfig(),
 ): Promise<string> => {
   if (!config) {
-    throw new LlmUnavailableError("No LLM API key configured");
+    throw new LlmNotConfiguredError();
   }
 
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;

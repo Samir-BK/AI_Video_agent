@@ -2,8 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Play, ShieldCheck, Sparkles, TrendingUp, X } from "lucide-react";
+import { ShieldCheck, Sparkles, TrendingUp, X } from "lucide-react";
 
+import { buildBookingUrl } from "@/lib/booking";
+
+import CartoonAnimator, {
+  type CartoonPhase,
+} from "@/app/components/CartoonAnimator";
 import type {
   DiscoveryOutput,
   EmailOutput,
@@ -76,6 +81,20 @@ export default function MobileModal({
     ) ?? videoScript.scenes[videoScript.scenes.length - 1]!;
 
   const progress = Math.min(100, (elapsed / duration) * 100);
+
+  const cartoonScenes = videoScript.cartoonScenes ?? [];
+  // Derive the phase from the scene boundaries so the phone preview can never
+  // drift out of sync with a retimed storyboard.
+  const phase: CartoonPhase =
+    activeScene.id <= 1 ? "intro" : activeScene.id === 2 ? "problem" : "solution";
+  const phaseBeat =
+    phase === "intro"
+      ? null
+      : (cartoonScenes.find((scene) =>
+          phase === "problem"
+            ? scene.type === "problem_animation"
+            : scene.type === "solution_animation",
+        ) ?? cartoonScenes[phase === "problem" ? 0 : 1] ?? null);
 
   return (
     <AnimatePresence>
@@ -150,43 +169,35 @@ export default function MobileModal({
                   </div>
 
                   <div className="velho-scroll h-[calc(100%-28px)] overflow-y-auto">
-                    {/* Hero video surface */}
-                    <div
-                      className="relative aspect-[4/5] w-full overflow-hidden"
-                      style={{
-                        background: `radial-gradient(120% 90% at 50% 10%, ${palette.primary}33, #08090d 65%)`,
-                      }}
-                    >
-                      {/* Animated brand glow */}
-                      <motion.div
-                        className="absolute inset-0"
-                        animate={{
-                          opacity: [0.35, 0.6, 0.35],
-                        }}
-                        transition={{
-                          duration: 4,
-                          repeat: Infinity,
-                          ease: "easeInOut",
-                        }}
-                        style={{
-                          background: `radial-gradient(70% 55% at 50% 45%, ${palette.accent}26, transparent 70%)`,
-                        }}
-                      />
+                    {/* Hero video surface — the same dynamic cartoon the
+                        desktop player renders, scoped to the phone frame. */}
+                    <div className="relative aspect-[4/5] w-full overflow-hidden">
+                      <AnimatePresence mode="wait">
+                        <motion.div
+                          key={phase}
+                          initial={{ opacity: 0, scale: 1.02 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.99 }}
+                          transition={{ duration: 0.4 }}
+                          className="absolute inset-0"
+                        >
+                          <CartoonAnimator
+                            phase={phase}
+                            cartoonScene={phaseBeat}
+                            category={videoScript.bottleneckCategory}
+                            companyName={discovery.companyName}
+                            domain={discovery.domain}
+                            glyph={discovery.brand.glyph}
+                            industry={discovery.industry}
+                            palette={palette}
+                            elapsedSec={elapsed}
+                            paused={false}
+                          />
+                        </motion.div>
+                      </AnimatePresence>
 
-                      {/* Play button */}
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="relative flex h-14 w-14 items-center justify-center rounded-full border border-white/25 bg-white/10 backdrop-blur-md">
-                          <span
-                            className="absolute inset-0 animate-ping rounded-full"
-                            style={{ backgroundColor: `${palette.accent}22` }}
-                          />
-                          <Play
-                            className="ml-0.5 h-5 w-5 text-white"
-                            strokeWidth={2}
-                            fill="currentColor"
-                          />
-                        </div>
-                      </div>
+                      {/* Cinematic scrim so the overlay text stays legible */}
+                      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/85 via-black/40 to-transparent" />
 
                       {/* Scene overlay text */}
                       <div className="absolute inset-x-0 bottom-0 p-4">
@@ -288,13 +299,15 @@ export default function MobileModal({
                       </div>
 
                       {/* CTA */}
-                      <button
-                        type="button"
-                        className="w-full rounded-xl py-2.5 text-[12px] font-semibold text-zinc-900 transition-opacity hover:opacity-90"
+                      <a
+                        href={buildBookingUrl(discovery.companyName, discovery.domain)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block w-full rounded-xl py-2.5 text-center text-[12px] font-semibold text-zinc-900 transition-opacity hover:opacity-90"
                         style={{ backgroundColor: palette.accent }}
                       >
                         Book a 15-minute walkthrough
-                      </button>
+                      </a>
 
                       {/* Trust line */}
                       <p className="flex items-center justify-center gap-1.5 text-[9.5px] text-zinc-600">

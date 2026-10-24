@@ -55,6 +55,197 @@ body {
   background: rgba(255, 255, 255, 0.2);
 }
 
+/* ------------------------------------------------------------------ */
+/* Cartoon animator keyframes                                          */
+/*                                                                     */
+/* Every cartoon beat is drawn as inline SVG and driven by these       */
+/* declarative keyframes, so the animation runs on the compositor and  */
+/* never depends on the React render loop.                             */
+/* ------------------------------------------------------------------ */
+
+/* --- Problem-mode motion (red / amber) --- */
+@keyframes velho-shake {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  15% {
+    transform: translate(-2.5px, 1px) rotate(-1.4deg);
+  }
+  30% {
+    transform: translate(2.5px, -1px) rotate(1.4deg);
+  }
+  45% {
+    transform: translate(-2px, -1.5px) rotate(-1deg);
+  }
+  60% {
+    transform: translate(2px, 1.5px) rotate(1deg);
+  }
+  80% {
+    transform: translate(-1px, 0.5px) rotate(-0.5deg);
+  }
+}
+
+@keyframes velho-pulse-warning {
+  0%,
+  100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 0 rgba(244, 63, 94, 0));
+  }
+  50% {
+    opacity: 0.62;
+    filter: drop-shadow(0 0 9px rgba(244, 63, 94, 0.85));
+  }
+}
+
+@keyframes velho-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-9px);
+  }
+}
+
+@keyframes velho-slide-in {
+  0% {
+    transform: translateX(-30px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* --- Solution-mode motion (green / blue) --- */
+@keyframes velho-spin-gear {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes velho-flow-success {
+  0% {
+    stroke-dashoffset: 220;
+    opacity: 0.2;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+@keyframes velho-pop-in {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.22);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* --- Shared motion --- */
+@keyframes velho-fade-red-to-green {
+  0% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes velho-dash-march {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+
+@keyframes velho-rise {
+  0% {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes velho-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+/* SVG transform helpers — rotation/scale must pivot on the element itself. */
+.velho-svg-anim {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.velho-anim-shake {
+  animation: velho-shake 0.5s ease-in-out infinite;
+}
+
+.velho-anim-pulse {
+  animation: velho-pulse-warning 1.6s ease-in-out infinite;
+}
+
+.velho-anim-bounce {
+  animation: velho-bounce 1.5s ease-in-out infinite;
+}
+
+.velho-anim-slide-in {
+  animation: velho-slide-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.velho-anim-spin-gear {
+  animation: velho-spin-gear 6s linear infinite;
+}
+
+.velho-anim-pop-in {
+  animation: velho-pop-in 0.55s cubic-bezier(0.22, 1.3, 0.36, 1) both;
+}
+
+.velho-anim-fade-red-to-green {
+  animation: velho-fade-red-to-green 0.7s ease-out both;
+}
+
+.velho-anim-dash-march {
+  animation: velho-dash-march 1s linear infinite;
+}
+
+.velho-anim-rise {
+  animation: velho-rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.velho-anim-float {
+  animation: velho-float 3s ease-in-out infinite;
+}
+
+/* Freeze every descendant animation when the video is paused. */
+.velho-anim-paused,
+.velho-anim-paused * {
+  animation-play-state: paused !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -5,7 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Velho Outreach Engine — AI B2B Video Outreach",
   description:
-    "Enter a domain. Five agents research the company, find the bottleneck, and produce a personalized 20-second video plus a CEO cold email.",
+    "Enter a domain. Five agents research the company, find the bottleneck, and produce a personalized 45-second video plus a CEO cold email.",
 };
 
 export const viewport: Viewport = {

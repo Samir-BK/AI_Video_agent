@@ -5,6 +5,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Captions,
   CaptionsOff,
+  CalendarClock,
+  Mic,
   Pause,
   Play,
   RotateCcw,
@@ -12,22 +14,32 @@ import {
   VolumeX,
 } from "lucide-react";
 
+import CartoonAnimator, {
+  type CartoonPhase,
+} from "@/app/components/CartoonAnimator";
+import { VideoAudioEngine, type AudioBedPhase } from "@/lib/audioEngine";
+import { buildBookingUrl } from "@/lib/booking";
+import { NarrationTrack, splitSentences } from "@/lib/narration";
 import type {
   BrandPalette,
+  VoiceoverProvider,
+  CartoonAnimationScene,
   DiscoveryOutput,
+  ProblemOutput,
+  SolutionOutput,
   VideoScriptOutput,
   VideoScene,
 } from "@/types/pipeline";
-import { hashString } from "@/lib/mockData";
-import { renderScene, resizeCanvas } from "@/lib/sceneRenderer";
 
 interface VideoPlayerProps {
   script: VideoScriptOutput;
   discovery: DiscoveryOutput;
+  problem: ProblemOutput;
+  solution: SolutionOutput;
 }
 
 /** How often React state syncs with the animation clock (ms). */
-const UI_SYNC_INTERVAL_MS = 50;
+const UI_SYNC_INTERVAL_MS = 60;
 
 const DEFAULT_PALETTE: BrandPalette = {
   primary: "#38BDF8",
@@ -35,33 +47,81 @@ const DEFAULT_PALETTE: BrandPalette = {
   accent: "#7DD3FC",
 };
 
-/** Pick a natural-sounding English voice when one is available. */
-const selectVoice = (
-  voices: SpeechSynthesisVoice[],
-): SpeechSynthesisVoice | null => {
-  const english = voices.filter((voice) =>
-    voice.lang.toLowerCase().startsWith("en"),
-  );
-  const pool = english.length > 0 ? english : voices;
-
-  const preferred = [
-    "samantha",
-    "google us english",
-    "microsoft aria",
-    "microsoft jenny",
-    "alex",
-    "daniel",
-  ];
-
-  for (const name of preferred) {
-    const match = pool.find((voice) => voice.name.toLowerCase().includes(name));
-    if (match) return match;
-  }
-  return pool[0] ?? null;
+const PROVIDER_LABELS: Record<VoiceoverProvider, string> = {
+  elevenlabs: "ElevenLabs neural voice",
+  openai: "OpenAI neural voice",
+  groq: "Groq Orpheus voice",
+  browser: "Browser voice (add a TTS key for neural)",
 };
 
-export default function VideoPlayer({ script, discovery }: VideoPlayerProps) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+/**
+ * Derive the cartoon phase from the scene boundaries themselves, so retiming
+ * the storyboard never desyncs the visuals from the script.
+ */
+const phaseForSecond = (second: number, scenes: VideoScene[]): CartoonPhase => {
+  const scene = scenes.find(
+    (candidate) => second >= candidate.startSec && second < candidate.endSec,
+  );
+  if (!scene) return "solution";
+  if (scene.id <= 1) return "intro";
+  return scene.id === 2 ? "problem" : "solution";
+};
+
+/** Short role label for the current beat — the lower-third kicker. */
+const sceneKickerLabel = (phase: CartoonPhase): string => {
+  if (phase === "intro") return "Company Snapshot";
+  if (phase === "problem") return "The Bottleneck";
+  return "The Velho Fix";
+};
+
+/** One spoken line, timed, ready to render as a subtitle. */
+interface CaptionCue {
+  startSec: number;
+  endSec: number;
+  text: string;
+}
+
+/**
+ * Split every scene's voiceover into sentence-sized subtitle cues, each timed
+ * in proportion to its word count. This gives the video real broadcast-style
+ * subtitles — one short line at a time — instead of dumping a paragraph on
+ * screen.
+ */
+const buildCaptionCues = (scenes: VideoScene[]): CaptionCue[] => {
+  const cues: CaptionCue[] = [];
+
+  scenes.forEach((scene) => {
+    const sentences = scene.voiceover
+      .split(/(?<=[.!?])\s+/)
+      .map((sentence) => sentence.trim())
+      .filter(Boolean);
+    if (sentences.length === 0) return;
+
+    const span = Math.max(scene.endSec - scene.startSec, 0.1);
+    const wordCounts = sentences.map(
+      (sentence) => sentence.split(/\s+/).filter(Boolean).length || 1,
+    );
+    const totalWords = wordCounts.reduce((sum, count) => sum + count, 0);
+
+    let cursor = scene.startSec;
+    sentences.forEach((sentence, index) => {
+      const isLast = index === sentences.length - 1;
+      const share = wordCounts[index]! / totalWords;
+      const end = isLast ? scene.endSec : cursor + span * share;
+      cues.push({ startSec: cursor, endSec: end, text: sentence });
+      cursor = end;
+    });
+  });
+
+  return cues;
+};
+
+export default function VideoPlayer({
+  script,
+  discovery,
+  problem,
+  solution,
+}: VideoPlayerProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
 
   const rafRef = useRef<number | null>(null);
@@ -70,8 +130,11 @@ export default function VideoPlayer({ script, discovery }: VideoPlayerProps) {
   const offsetRef = useRef<number>(0);
   const lastSyncRef = useRef<number>(0);
   const spokenSceneRef = useRef<number>(-1);
-  const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
-  const sizeRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
+  const narrationRef = useRef<NarrationTrack | null>(null);
+  const [voiceProvider, setVoiceProvider] = useState<VoiceoverProvider | null>(
+    null,
+  );
+  const [voiceLoading, setVoiceLoading] = useState(true);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -79,13 +142,42 @@ export default function VideoPlayer({ script, discovery }: VideoPlayerProps) {
   const [showCaptions, setShowCaptions] = useState(true);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [hasEnded, setHasEnded] = useState(false);
+  const [audioUnsupported, setAudioUnsupported] = useState(false);
+  const [audioActive, setAudioActive] = useState(false);
+
+  const engineRef = useRef<VideoAudioEngine | null>(null);
+  /** Last phase we fired a transition sting for, so we only fire on change. */
+  const stungPhaseRef = useRef<CartoonPhase | null>(null);
 
   const palette = discovery.brand.palette ?? DEFAULT_PALETTE;
-  const seed = useMemo(() => hashString(discovery.domain), [discovery.domain]);
+  const bookingHref = buildBookingUrl(discovery.companyName, discovery.domain);
+  const category = script.bottleneckCategory;
+
+  /** The two authored cartoon beats, in order: [problem, solution]. */
+  const cartoonScenes = useMemo<CartoonAnimationScene[]>(
+    () => script.cartoonScenes ?? [],
+    [script.cartoonScenes],
+  );
+  const problemBeat = useMemo(
+    () =>
+      cartoonScenes.find((scene) => scene.type === "problem_animation") ??
+      cartoonScenes[0] ??
+      null,
+    [cartoonScenes],
+  );
+  const solutionBeat = useMemo(
+    () =>
+      cartoonScenes.find((scene) => scene.type === "solution_animation") ??
+      cartoonScenes[1] ??
+      null,
+    [cartoonScenes],
+  );
 
   const durationMs = Math.max(script.durationSec, 1) * 1000;
   const scenes = script.scenes;
   const elapsedSec = elapsedMs / 1000;
+
+  const phase = phaseForSecond(elapsedSec, scenes);
 
   const activeScene: VideoScene = useMemo(() => {
     const found = scenes.find(
@@ -94,107 +186,80 @@ export default function VideoPlayer({ script, discovery }: VideoPlayerProps) {
     return found ?? scenes[scenes.length - 1]!;
   }, [scenes, elapsedSec]);
 
-  const sceneProgress = useMemo(() => {
-    const span = Math.max(activeScene.endSec - activeScene.startSec, 0.001);
-    return Math.min(1, Math.max(0, (elapsedSec - activeScene.startSec) / span));
-  }, [activeScene, elapsedSec]);
+  /** Sentence-level subtitles, timed across the whole storyboard. */
+  const captionCues = useMemo(() => buildCaptionCues(scenes), [scenes]);
 
-  /* ---------------- Speech synthesis setup ---------------- */
+  /** The one subtitle line that should be on screen right now. */
+  const activeCue = useMemo(
+    () =>
+      captionCues.find(
+        (cue) => elapsedSec >= cue.startSec && elapsedSec < cue.endSec,
+      ) ?? null,
+    [captionCues, elapsedSec],
+  );
+
+  /* ---------------- Audio engine setup ---------------- */
 
   useEffect(() => {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-
-    setVoiceSupported(true);
-
-    const loadVoices = () => {
-      const voices = window.speechSynthesis.getVoices();
-      if (voices.length > 0) voiceRef.current = selectVoice(voices);
-    };
-
-    loadVoices();
-    window.speechSynthesis.addEventListener("voiceschanged", loadVoices);
+    const engine = new VideoAudioEngine();
+    engineRef.current = engine;
+    if (!engine.isSupported) setAudioUnsupported(true);
 
     return () => {
-      window.speechSynthesis.removeEventListener("voiceschanged", loadVoices);
-      window.speechSynthesis.cancel();
+      engine.dispose();
+      engineRef.current = null;
     };
   }, []);
 
-  const speak = useCallback(
-    (text: string) => {
-      if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-      if (isMuted || !text.trim()) return;
+  /* ---------------- Neural voiceover setup ---------------- */
 
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      if (voiceRef.current) utterance.voice = voiceRef.current;
-      utterance.rate = 1.02;
-      utterance.pitch = 1;
-      utterance.volume = 1;
-      window.speechSynthesis.speak(utterance);
+  useEffect(() => {
+    setVoiceSupported(true);
+    // Duck the music bed whenever the narrator is speaking.
+    const track = new NarrationTrack({
+      onVoiceActive: (active) => engineRef.current?.setVoiceActive(active),
+    });
+    narrationRef.current = track;
+
+    // Voice every line up front so playback starts without a gap.
+    setVoiceLoading(true);
+    void track.preload(scenes).finally(() => {
+      if (narrationRef.current !== track) return;
+      setVoiceProvider(track.activeProvider ?? "browser");
+      setVoiceLoading(false);
+    });
+
+    return () => {
+      track.dispose();
+      if (narrationRef.current === track) narrationRef.current = null;
+    };
+  }, [scenes]);
+
+  /**
+   * Narrate a scene. When playback lands mid-scene (seek), skip the lines
+   * whose caption window already passed, so voice and subtitles stay in sync.
+   */
+  const speakScene = useCallback(
+    (scene: VideoScene, atSec?: number) => {
+      const track = narrationRef.current;
+      if (!track || isMuted) return;
+      let skip = 0;
+      if (atSec !== undefined && atSec > scene.startSec + 0.25) {
+        const cues = buildCaptionCues([scene]);
+        skip = cues.filter((cue) => cue.endSec <= atSec).length;
+        if (skip >= splitSentences(scene.voiceover).length) return;
+      }
+      void track.playScene(scene, skip);
     },
     [isMuted],
   );
 
   const stopSpeech = useCallback(() => {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
+    narrationRef.current?.stop();
+    engineRef.current?.setVoiceActive(false);
   }, []);
 
-  /* ---------------- Animation loop ---------------- */
-
-  const draw = useCallback(
-    (ms: number) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const { w, h } = sizeRef.current;
-      if (w === 0 || h === 0) return;
-
-      const ctx = resizeCanvas(canvas, w, h);
-      if (!ctx) return;
-
-      const seconds = ms / 1000;
-      const scene =
-        scenes.find(
-          (s) => seconds >= s.startSec && seconds < s.endSec,
-        ) ?? scenes[scenes.length - 1]!;
-
-      const span = Math.max(scene.endSec - scene.startSec, 0.001);
-      const progress = Math.min(
-        1,
-        Math.max(0, (seconds - scene.startSec) / span),
-      );
-
-      renderScene({
-        ctx,
-        width: w,
-        height: h,
-        sceneId: scene.id,
-        progress,
-        timeMs: ms,
-        palette,
-        seed,
-      });
-    },
-    [palette, scenes, seed],
-  );
-
-  /** Keep the canvas sized to its container. */
-  useEffect(() => {
-    const shell = shellRef.current;
-    if (!shell) return;
-
-    const measure = () => {
-      const rect = shell.getBoundingClientRect();
-      sizeRef.current = { w: rect.width, h: rect.height };
-      draw(offsetRef.current);
-    };
-
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(shell);
-    return () => observer.disconnect();
-  }, [draw]);
+  /* ---------------- Animation clock ---------------- */
 
   useEffect(() => {
     if (!isPlaying) {
@@ -215,14 +280,11 @@ export default function VideoPlayer({ script, discovery }: VideoPlayerProps) {
         setElapsedMs(durationMs);
         setIsPlaying(false);
         setHasEnded(true);
-        stopSpeech();
-        draw(durationMs);
+        // Let the narrator finish the closing call to action.
         return;
       }
 
-      draw(ms);
-
-      // Throttle React state so the tree doesn't re-render at 60fps.
+      // The cartoon layer runs on CSS, so we only synchronize React state.
       if (now - lastSyncRef.current >= UI_SYNC_INTERVAL_MS) {
         lastSyncRef.current = now;
         setElapsedMs(ms);
@@ -239,7 +301,7 @@ export default function VideoPlayer({ script, discovery }: VideoPlayerProps) {
         rafRef.current = null;
       }
     };
-  }, [isPlaying, durationMs, draw, stopSpeech]);
+  }, [isPlaying, durationMs, stopSpeech]);
 
   /* ---------------- Voiceover sync ---------------- */
 
@@ -247,41 +309,104 @@ export default function VideoPlayer({ script, discovery }: VideoPlayerProps) {
     if (!isPlaying) return;
     if (spokenSceneRef.current === activeScene.id) return;
 
+    const previous = spokenSceneRef.current;
     spokenSceneRef.current = activeScene.id;
-    speak(activeScene.voiceover);
-  }, [activeScene, isPlaying, speak]);
+
+    // Natural hand-off to the next scene: let the narrator finish the line.
+    if (previous === activeScene.id - 1 && !isMuted) {
+      void narrationRef.current?.queueScene(activeScene);
+      return;
+    }
+    // Resume / seek / unmute can land mid-scene: pick narration up from there.
+    const liveMs = offsetRef.current + (performance.now() - startRef.current);
+    speakScene(activeScene, liveMs / 1000);
+  }, [activeScene, isPlaying, isMuted, speakScene]);
+
+  /* ---------------- Music + SFX sync ---------------- */
+
+  /** Shift the ambient bed to match the storyboard phase. */
+  useEffect(() => {
+    if (!isPlaying) return;
+    engineRef.current?.setPhase(phase as AudioBedPhase);
+  }, [isPlaying, phase]);
+
+  /**
+   * Fire a one-shot sting as each beat lands: a tension hit when the problem
+   * appears, a resolve chime when the solution takes over.
+   */
+  useEffect(() => {
+    if (!isPlaying) {
+      stungPhaseRef.current = null;
+      return;
+    }
+    if (stungPhaseRef.current === phase) return;
+    stungPhaseRef.current = phase;
+
+    const engine = engineRef.current;
+    if (!engine) return;
+
+    if (phase === "problem") engine.playProblemSting();
+    else if (phase === "solution") engine.playSuccessChime();
+  }, [isPlaying, phase]);
 
   /* ---------------- Controls ---------------- */
+
+  /**
+   * Bring the soundtrack up. Must run inside a user gesture, which is why the
+   * audio context is only created from a click handler.
+   */
+  const startAudio = useCallback(async () => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    const ready = await engine.ensureContext({
+      onUnsupported: () => setAudioUnsupported(true),
+    });
+    if (!ready) return;
+    engine.setMuted(isMuted);
+    engine.setPhase(phase as AudioBedPhase);
+    engine.start();
+    setAudioActive(true);
+  }, [isMuted, phase]);
 
   const handlePlayPause = useCallback(() => {
     if (hasEnded) {
       // Replay from the top.
       offsetRef.current = 0;
       spokenSceneRef.current = -1;
+      stungPhaseRef.current = null;
       setElapsedMs(0);
       setHasEnded(false);
       setIsPlaying(true);
+      void startAudio();
       return;
     }
 
     setIsPlaying((prev) => {
       if (prev) {
-        offsetRef.current = offsetRef.current + (performance.now() - startRef.current);
+        offsetRef.current =
+          offsetRef.current + (performance.now() - startRef.current);
         stopSpeech();
+        // Resume re-narrates from the paused sentence.
+        spokenSceneRef.current = -1;
+        engineRef.current?.stop();
+        setAudioActive(false);
         return false;
       }
+      void startAudio();
       return true;
     });
-  }, [hasEnded, stopSpeech]);
+  }, [hasEnded, startAudio, stopSpeech]);
 
   const handleRestart = useCallback(() => {
     stopSpeech();
     offsetRef.current = 0;
     spokenSceneRef.current = -1;
+    stungPhaseRef.current = null;
     setElapsedMs(0);
     setHasEnded(false);
     setIsPlaying(true);
-  }, [stopSpeech]);
+    void startAudio();
+  }, [startAudio, stopSpeech]);
 
   const handleSeek = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -298,26 +423,35 @@ export default function VideoPlayer({ script, discovery }: VideoPlayerProps) {
       setElapsedMs(target);
       setHasEnded(false);
 
-      // Force the voiceover to re-fire for whichever scene we landed in.
+      // Force the voiceover to re-fire for whichever scene we landed in, and
+      // resync the bed to the beat we jumped into.
       const targetSec = target / 1000;
       const landed = scenes.find(
-        (s) => targetSec >= s.startSec && targetSec < s.endSec,
+        (scene) => targetSec >= scene.startSec && targetSec < scene.endSec,
       );
       spokenSceneRef.current = -1;
+      stungPhaseRef.current = null;
+      engineRef.current?.setPhase(phaseForSecond(targetSec, scenes) as AudioBedPhase);
+      engineRef.current?.playTransition();
       if (isPlaying && landed) {
         spokenSceneRef.current = landed.id;
-        speak(landed.voiceover);
+        speakScene(landed, targetSec);
+      } else {
+        stopSpeech();
       }
-
-      draw(target);
     },
-    [durationMs, draw, isPlaying, scenes, speak],
+    [durationMs, isPlaying, scenes, speakScene, stopSpeech],
   );
 
   const toggleMute = useCallback(() => {
     setIsMuted((prev) => {
-      if (!prev) stopSpeech();
-      return !prev;
+      const next = !prev;
+      narrationRef.current?.setMuted(next);
+      if (next) stopSpeech();
+      // Unmuting picks the narration back up at the current sentence.
+      else spokenSceneRef.current = -1;
+      engineRef.current?.setMuted(next);
+      return next;
     });
   }, [stopSpeech]);
 
@@ -330,6 +464,33 @@ export default function VideoPlayer({ script, discovery }: VideoPlayerProps) {
 
   const progressPercent = Math.min(100, (elapsedMs / durationMs) * 100);
 
+  const sceneChipLabel = (sceneId: number): string => {
+    if (sceneId === 1) return "Intro";
+    if (sceneId === 2) return "Problem";
+    return "Solution";
+  };
+
+  /**
+   * The quantified hook for the beat — hours lost while the problem plays, the
+   * book-me line while the solution resolves. Keeps exactly one supporting
+   * number on screen at a time.
+   */
+  const bottomMeta = ((): string | null => {
+    if (phase === "intro") return null;
+    if (phase === "problem") {
+      const impact = problem.impact;
+      if (impact?.hoursLostPerWeek) return `${impact.hoursLostPerWeek} hrs/week lost`;
+      const bottom = activeScene.overlays.find(
+        (overlay) => overlay.position === "bottom",
+      );
+      return bottom?.text ?? null;
+    }
+    const bottom = activeScene.overlays.find(
+      (overlay) => overlay.position === "bottom",
+    );
+    return bottom?.text ?? null;
+  })();
+
   return (
     <section className="overflow-hidden rounded-2xl border border-velho-line bg-velho-panel/60">
       {/* Header */}
@@ -339,11 +500,11 @@ export default function VideoPlayer({ script, discovery }: VideoPlayerProps) {
             {discovery.brand.glyph}
           </span>
           <h2 className="truncate text-[13px] font-semibold text-zinc-300">
-            20-Second Personalized Video
+            45-Second Personalized Video
           </h2>
         </div>
         <span className="shrink-0 rounded-full border border-velho-line px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-zinc-500">
-          {script.scenes.length} scenes · {script.durationSec}s
+          {category.replace(/_/g, " ")} · {script.durationSec}s
         </span>
       </header>
 
@@ -353,73 +514,170 @@ export default function VideoPlayer({ script, discovery }: VideoPlayerProps) {
         className="relative aspect-video w-full cursor-pointer overflow-hidden bg-velho-void"
         onClick={handlePlayPause}
       >
-        <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
-
-        {/* Text overlays */}
+        {/* Dynamic cartoon layer — the actual video surface */}
         <AnimatePresence mode="wait">
           <motion.div
-            key={activeScene.id}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.35 }}
-            className="pointer-events-none absolute inset-0 flex flex-col justify-between p-[4.5%]"
+            key={phase}
+            initial={{ opacity: 0, scale: 1.015 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.99 }}
+            transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+            className="absolute inset-0"
           >
-            {/* Top: company identity */}
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <span className="text-base leading-none">
-                  {discovery.brand.glyph}
-                </span>
-                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/70">
-                  {discovery.companyName}
-                </span>
-              </div>
-              <span className="font-mono text-[10px] tabular-nums text-white/40">
-                {formatTime(elapsedSec)} / {formatTime(script.durationSec)}
-              </span>
-            </div>
+            <CartoonAnimator
+              phase={phase}
+              cartoonScene={
+                phase === "problem"
+                  ? problemBeat
+                  : phase === "solution"
+                    ? solutionBeat
+                    : null
+              }
+              category={category}
+              companyName={discovery.companyName}
+              domain={discovery.domain}
+              glyph={discovery.brand.glyph}
+              industry={discovery.industry}
+              palette={palette}
+              elapsedSec={elapsedSec}
+              paused={!isPlaying}
+            />
+          </motion.div>
+        </AnimatePresence>
 
-            {/* Center: the scene's headline overlay */}
-            <div className="flex flex-col items-center text-center">
-              {activeScene.overlays
-                .filter((overlay) => overlay.position === "center")
-                .map((overlay, index) => (
-                  <motion.p
-                    key={`${activeScene.id}-center-${index}`}
-                    initial={{ opacity: 0, y: 14, filter: "blur(6px)" }}
-                    animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-                    transition={{
-                      duration: 0.6,
-                      delay: 0.12 + index * 0.1,
-                      ease: [0.22, 1, 0.36, 1],
-                    }}
-                    className="max-w-[85%] text-balance text-[clamp(1.05rem,3.6vw,2.1rem)] font-bold leading-[1.12] tracking-[-0.02em] text-white drop-shadow-[0_2px_18px_rgba(0,0,0,0.6)]"
+        {/*
+          Cinematic scrims. These keep a broadcast look and guarantee legibility
+          while leaving the middle of the frame (where the cartoon lives) clear.
+        */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 h-[22%] bg-gradient-to-b from-black/70 to-transparent"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-[38%] bg-gradient-to-t from-black/85 via-black/45 to-transparent"
+        />
+
+        {/*
+          Top strip — identity rail only. No sentences up here: the story is told
+          by the artwork, and narration belongs in the caption / voiceover.
+        */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between gap-3 p-[3.5%]">
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] leading-none">
+              {discovery.brand.glyph}
+            </span>
+            <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/60">
+              {discovery.companyName}
+            </span>
+          </div>
+          <span className="rounded-full bg-black/35 px-2 py-0.5 font-mono text-[10px] tabular-nums text-white/55 backdrop-blur-sm">
+            {formatTime(elapsedSec)} / {formatTime(script.durationSec)}
+          </span>
+        </div>
+
+        {/*
+          Lower third — the single, well-managed text zone. A kicker line plus a
+          restrained headline replaces the old wall of competing prose.
+        */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={`lower-third-${activeScene.id}`}
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+            className="pointer-events-none absolute inset-x-0 bottom-0 p-[3.5%]"
+          >
+            <div className="flex items-end justify-between gap-4">
+              <div className="min-w-0">
+                {/* Kicker: the scene's role in the story */}
+                <div className="mb-1.5 flex items-center gap-1.5">
+                  <span
+                    className="h-1.5 w-1.5 rounded-full"
                     style={{
-                      textShadow: `0 0 44px ${palette.primary}55`,
+                      backgroundColor:
+                        phase === "problem"
+                          ? "#F43F5E"
+                          : phase === "solution"
+                            ? "#10B981"
+                            : palette.accent,
+                    }}
+                  />
+                  <span
+                    className="text-[9.5px] font-bold uppercase tracking-[0.18em]"
+                    style={{
+                      color:
+                        phase === "problem"
+                          ? "#FDA4AF"
+                          : phase === "solution"
+                            ? "#6EE7B7"
+                            : palette.accent,
                     }}
                   >
-                    {overlay.text}
+                    {sceneKickerLabel(phase)}
+                  </span>
+                </div>
+
+                {/*
+                  Subtitle line — the only sentence rendered on the video.
+                  It advances in short, timed cues so it reads like real
+                  captions rather than a headline competing with the cartoon.
+                */}
+                {showCaptions && activeCue ? (
+                  <motion.p
+                    key={activeCue.text}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.32 }}
+                    className="max-w-[min(56ch,74%)] text-balance text-[clamp(0.72rem,1.75vw,1.02rem)] font-semibold leading-[1.35] tracking-[-0.005em] text-white"
+                    style={{
+                      textShadow: "0 2px 12px rgba(0,0,0,0.85)",
+                    }}
+                  >
+                    {activeCue.text}
                   </motion.p>
-                ))}
+                ) : null}
+              </div>
+
+              {/* Right meta: the quantified hook for this beat */}
+              {bottomMeta ? (
+                <motion.span
+                  initial={{ opacity: 0, scale: 0.94 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.5, delay: 0.2 }}
+                  className="shrink-0 rounded-lg border px-2.5 py-1 text-right text-[10px] font-bold backdrop-blur-sm"
+                  style={{
+                    borderColor: `${palette.accent}44`,
+                    backgroundColor: `${palette.accent}18`,
+                    color: palette.accent,
+                  }}
+                >
+                  {bottomMeta}
+                </motion.span>
+              ) : null}
             </div>
 
-            {/* Bottom: supporting line */}
-            <div className="flex flex-col items-center gap-1 text-center">
-              {activeScene.overlays
-                .filter((overlay) => overlay.position === "bottom")
-                .map((overlay, index) => (
-                  <motion.p
-                    key={`${activeScene.id}-bottom-${index}`}
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5, delay: 0.3 }}
-                    className="max-w-[90%] text-[clamp(0.6rem,1.6vw,0.85rem)] font-medium text-white/80"
-                  >
-                    {overlay.text}
-                  </motion.p>
-                ))}
-            </div>
+            {/* Meeting CTA — only once the Velho solution has landed */}
+            {phase === "solution" ? (
+              <motion.a
+                href={bookingHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(event) => event.stopPropagation()}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.75 }}
+                className="pointer-events-auto mt-2.5 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[11px] font-bold text-zinc-900 shadow-lg transition-transform hover:scale-[1.03]"
+                style={{
+                  background: `linear-gradient(135deg, ${palette.accent}, #6EE7B7)`,
+                  boxShadow: `0 8px 26px -8px ${palette.accent}aa`,
+                }}
+              >
+                <CalendarClock className="h-3.5 w-3.5" strokeWidth={2.5} />
+                Book your 15-minute walkthrough — one click
+              </motion.a>
+            ) : null}
           </motion.div>
         </AnimatePresence>
 
@@ -453,21 +711,6 @@ export default function VideoPlayer({ script, discovery }: VideoPlayerProps) {
           )}
         </AnimatePresence>
 
-        {/* Voiceover caption bar */}
-        <AnimatePresence>
-          {showCaptions && isPlaying && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 8 }}
-              className="pointer-events-none absolute inset-x-[6%] bottom-[4.5%]"
-            >
-              <p className="mx-auto max-w-2xl rounded-lg bg-black/55 px-3 py-1.5 text-center text-[11px] leading-snug text-white/90 backdrop-blur-sm">
-                {activeScene.voiceover}
-              </p>
-            </motion.div>
-          )}
-        </AnimatePresence>
       </div>
 
       {/* Transport */}
@@ -486,7 +729,6 @@ export default function VideoPlayer({ script, discovery }: VideoPlayerProps) {
           {scenes.map((scene) => {
             const span = scene.endSec - scene.startSec;
             const sceneStartMs = scene.startSec * 1000;
-            const sceneEndMs = scene.endSec * 1000;
             const fill = Math.min(
               1,
               Math.max(0, (elapsedMs - sceneStartMs) / (span * 1000)),
@@ -547,8 +789,8 @@ export default function VideoPlayer({ script, discovery }: VideoPlayerProps) {
             <button
               type="button"
               onClick={toggleMute}
-              disabled={!voiceSupported}
-              aria-label={isMuted ? "Unmute voiceover" : "Mute voiceover"}
+              disabled={!voiceSupported && audioUnsupported}
+              aria-label={isMuted ? "Unmute audio" : "Mute audio"}
               className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/[0.06] text-zinc-400 transition-colors hover:bg-white/[0.12] hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {isMuted ? (
@@ -580,16 +822,25 @@ export default function VideoPlayer({ script, discovery }: VideoPlayerProps) {
                 type="button"
                 onClick={(event) => {
                   event.stopPropagation();
-                  const rect =
-                    event.currentTarget.parentElement?.getBoundingClientRect();
-                  void rect;
                   offsetRef.current = scene.startSec * 1000;
                   startRef.current = performance.now();
                   lastSyncRef.current = 0;
                   setElapsedMs(scene.startSec * 1000);
                   setHasEnded(false);
-                  spokenSceneRef.current = -1;
-                  draw(scene.startSec * 1000);
+                  stungPhaseRef.current = null;
+                  // Narrate the chosen scene from its first line.
+                  if (isPlaying) {
+                    spokenSceneRef.current = scene.id;
+                    speakScene(scene);
+                  } else {
+                    spokenSceneRef.current = -1;
+                    stopSpeech();
+                  }
+                  // Snap the soundtrack to the beat we jumped to.
+                  engineRef.current?.setPhase(
+                    phaseForSecond(scene.startSec, scenes) as AudioBedPhase,
+                  );
+                  engineRef.current?.playTransition();
                 }}
                 className={`rounded-md px-2 py-1 font-mono text-[10px] transition-colors ${
                   activeScene.id === scene.id
@@ -598,32 +849,64 @@ export default function VideoPlayer({ script, discovery }: VideoPlayerProps) {
                 }`}
                 title={scene.title}
               >
-                {scene.startSec}–{scene.endSec}s
+                {sceneChipLabel(scene.id)}
+                <span className="ml-1 hidden text-zinc-600 sm:inline">
+                  {scene.startSec}-{scene.endSec}s
+                </span>
               </button>
             ))}
           </div>
         </div>
 
-        {/* Voiceover status + direction */}
+        {/* Audio status + direction */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-velho-line pt-2.5 text-[11px] text-zinc-600">
           <span className="flex items-center gap-1.5">
             <span
               className={`h-1.5 w-1.5 rounded-full ${
-                isPlaying && !isMuted && voiceSupported
+                isPlaying && !isMuted
                   ? "animate-pulse bg-emerald-400"
                   : "bg-zinc-700"
               }`}
             />
-            {voiceSupported
-              ? isMuted
-                ? "Voiceover muted"
-                : isPlaying
-                  ? "Voiceover playing"
-                  : "Voiceover ready"
-              : "Speech synthesis unavailable in this browser"}
+            {isMuted ? (
+              "Audio muted"
+            ) : isPlaying ? (
+              <span className="flex items-center gap-1.5">
+                Voiceover + score playing
+                {audioActive ? (
+                  <span className="flex items-end gap-[2px]" aria-hidden>
+                    {[0, 1, 2].map((bar) => (
+                      <motion.span
+                        key={bar}
+                        className="w-[2px] rounded-full bg-emerald-400/80"
+                        animate={{ height: [3, 9, 4, 10, 3] }}
+                        transition={{
+                          duration: 1.1,
+                          repeat: Infinity,
+                          delay: bar * 0.15,
+                          ease: "easeInOut",
+                        }}
+                      />
+                    ))}
+                  </span>
+                ) : null}
+              </span>
+            ) : audioUnsupported && !voiceSupported ? (
+              "Audio unavailable in this browser"
+            ) : audioActive ? (
+              "Score + voiceover ready"
+            ) : (
+              "Press play to start narration + score"
+            )}
+          </span>
+          <span className="flex items-center gap-1">
+            <Mic className="h-3 w-3" strokeWidth={2} />
+            {voiceLoading
+              ? "Recording voiceover…"
+              : PROVIDER_LABELS[voiceProvider ?? "browser"]}
           </span>
           <span className="hidden truncate sm:inline">
-            Direction: {script.voiceStyle}
+            Signal: {problem.title} → {solution.headlineMetric.delta}
           </span>
         </div>
       </div>

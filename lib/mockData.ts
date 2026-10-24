@@ -1,10 +1,13 @@
 import type {
+  BottleneckCategory,
+  CartoonAnimationScene,
   DiscoveryOutput,
   EmailOutput,
   ProblemOutput,
   SolutionOutput,
   VideoScriptOutput,
 } from "@/types/pipeline";
+import { resolveCartoonStoryboard, VIDEO_DURATION_SEC } from "@/lib/cartoonPresets";
 
 /* ------------------------------------------------------------------ */
 /* Deterministic helpers                                               */
@@ -98,6 +101,8 @@ export const companyNameFromDomain = (domain: string): string => {
 
 type Archetype = {
   id: string;
+  /** Authoritative cartoon category — drives the SVG animation layout. */
+  bottleneckCategory: BottleneckCategory;
   industry: string;
   tagline: (name: string) => string;
   businessModel: (name: string) => string;
@@ -127,6 +132,7 @@ type Archetype = {
 const ARCHETYPES: readonly Archetype[] = [
   {
     id: "construction",
+    bottleneckCategory: "quoting_and_order_intake",
     industry: "Construction & Specialty Contracting",
     tagline: (n) => `${n} builds on schedule — with quotes that land in hours, not days.`,
     businessModel: (n) =>
@@ -188,6 +194,7 @@ const ARCHETYPES: readonly Archetype[] = [
   },
   {
     id: "logistics",
+    bottleneckCategory: "field_reporting",
     industry: "Logistics & Field Service",
     tagline: (n) => `${n} moves freight on time — and finally knows where every job stands.`,
     businessModel: (n) =>
@@ -249,6 +256,7 @@ const ARCHETYPES: readonly Archetype[] = [
   },
   {
     id: "saas",
+    bottleneckCategory: "cross_system_data",
     industry: "B2B SaaS & Technology",
     tagline: (n) => `${n} ships software fast — onboarding should move just as fast.`,
     businessModel: (n) =>
@@ -310,6 +318,7 @@ const ARCHETYPES: readonly Archetype[] = [
   },
   {
     id: "manufacturing",
+    bottleneckCategory: "cross_system_data",
     industry: "Manufacturing & Industrial Supply",
     tagline: (n) => `${n} runs the line — the paperwork shouldn't run the plant.`,
     businessModel: (n) =>
@@ -371,6 +380,7 @@ const ARCHETYPES: readonly Archetype[] = [
   },
   {
     id: "professional-services",
+    bottleneckCategory: "cross_system_data",
     industry: "Professional & Financial Services",
     tagline: (n) => `${n} advises clients on their time — so let Velho give yours back.`,
     businessModel: (n) =>
@@ -531,60 +541,92 @@ export const mockVideoScript = (domain: string): VideoScriptOutput => {
   const archetype = selectArchetype(domain);
   const companyName = companyNameFromDomain(domain);
   const problem = archetype.problem;
+  const seed = hashString(domain);
 
+  // Classify from the company's own symptoms so domain-revealed bottlenecks
+  // (e.g. a scheduling pain in a "dental" domain) animate correctly, with the
+  // matched archetype as the deterministic tiebreaker.
+  const storyboard = resolveCartoonStoryboard(
+    domain,
+    companyName,
+    [
+      domain,
+      archetype.industry,
+      problem.title,
+      problem.summary(companyName),
+      problem.department,
+      ...problem.symptoms,
+    ],
+    archetype.bottleneckCategory,
+  );
+  const category: BottleneckCategory = storyboard.category;
+  const cartoonScenes: CartoonAnimationScene[] = storyboard.scenes;
+
+  const hoursLost = 18 + (seed % 26);
+  const weeksToValue = 2 + (seed % 3);
+
+  /**
+   * Timing is fixed by the cartoon storyboard (45s total):
+   *   0-6s    company identity intro
+   *   6-24s   cartoonish problem animation
+   *   24-45s  cartoonish solution flow + meeting CTA
+   */
   const scenes = [
     {
       id: 1,
       startSec: 0,
-      endSec: 7,
-      title: archetype.scenes[0]?.title ?? "The bottleneck",
-      voiceover: `${companyName}, here's what we noticed. ${problem.summary(companyName)}`,
+      endSec: 6,
+      title: `Meet ${companyName}`,
+      voiceover: `${companyName}, this one was made just for you. We studied how your ${archetype.problem.department.toLowerCase()} really runs today.`,
       overlays: [
         { text: companyName, position: "top" as const, emphasis: "secondary" as const },
-        { text: problem.title, position: "center" as const, emphasis: "primary" as const },
-        { text: "This is costing you capacity every week.", position: "bottom" as const, emphasis: "accent" as const },
+        { text: archetype.tagline(companyName), position: "center" as const, emphasis: "primary" as const },
+        { text: archetype.industry, position: "bottom" as const, emphasis: "accent" as const },
       ],
-      graphicCue: archetype.scenes[0]?.graphicCue ?? "Problem visual",
-      icon: archetype.scenes[0]?.icon ?? "AlertTriangle",
+      graphicCue: `${companyName} logo lockup over its live website hero`,
+      icon: archetype.scenes[0]?.icon ?? "Building2",
       transition: "fade" as const,
     },
     {
       id: 2,
-      startSec: 7,
-      endSec: 14,
-      title: archetype.scenes[1]?.title ?? "The solution",
-      voiceover: `Velho fixes this with ${archetype.solution.architectureName(companyName)}. ${archetype.solution.steps[0]?.outcome ?? "Automated intake"}. No new system to learn.`,
+      startSec: 6,
+      endSec: 24,
+      title: archetype.scenes[0]?.title ?? "The bottleneck",
+      voiceover: `Here is the problem. ${problem.summary(companyName)} Right now, ${problem.symptoms[0]?.toLowerCase() ?? "the work happens by hand"}, and ${problem.symptoms[1]?.toLowerCase() ?? "nothing stays in sync"}. Across ${problem.brokenSystems.length} disconnected systems, that adds up to about ${hoursLost} hours every week. Hours your best people should spend growing the business.`,
       overlays: [
-        { text: "The Velho fix", position: "top" as const, emphasis: "secondary" as const },
-        { text: archetype.solution.architectureName(companyName), position: "center" as const, emphasis: "primary" as const },
-        { text: archetype.solution.steps[0]?.outcome ?? "Automated intake", position: "bottom" as const, emphasis: "accent" as const },
+        { text: problem.title, position: "top" as const, emphasis: "secondary" as const },
+        { text: cartoonScenes[0]?.text_caption ?? problem.title, position: "center" as const, emphasis: "primary" as const },
+        { text: `${hoursLost} hrs/week lost to rework`, position: "bottom" as const, emphasis: "accent" as const },
       ],
-      graphicCue: archetype.scenes[1]?.graphicCue ?? "Solution visual",
-      icon: archetype.scenes[1]?.icon ?? "Sparkles",
+      graphicCue: cartoonScenes[0]?.visual_metaphor ?? "Problem animation",
+      icon: "AlertTriangle",
       transition: "slide" as const,
     },
     {
       id: 3,
-      startSec: 14,
-      endSec: 20,
-      title: archetype.scenes[2]?.title ?? "The outcome",
-      voiceover: `${archetype.solution.steps[2]?.outcome ?? "Measurable results"} in ${2 + (hashString(domain) % 3)} weeks. We built a working prototype for ${companyName}. Want to see it?`,
+      startSec: 24,
+      endSec: 45,
+      title: archetype.scenes[1]?.title ?? "The Velho fix",
+      voiceover: `Now, the solution. Velho built ${archetype.solution.architectureName(companyName)}. ${archetype.solution.steps[0]?.outcome ?? "Intake is automated"}. Then ${archetype.solution.steps[1]?.outcome?.toLowerCase() ?? "every step runs itself"}, and ${archetype.solution.steps[2]?.outcome?.toLowerCase() ?? "results are tracked automatically"}. It plugs into the tools you already use, and goes live in about ${weeksToValue} weeks. Your prototype is ready. Book a fifteen-minute walkthrough with one click, right below this video.`,
       overlays: [
-        { text: "The result", position: "top" as const, emphasis: "secondary" as const },
-        { text: archetype.solution.steps[2]?.outcome ?? "Measurable results", position: "center" as const, emphasis: "primary" as const },
-        { text: "Prototype ready — reply to see it live.", position: "bottom" as const, emphasis: "accent" as const },
+        { text: archetype.solution.architectureName(companyName), position: "top" as const, emphasis: "secondary" as const },
+        { text: cartoonScenes[1]?.text_caption ?? archetype.solution.steps[0]?.outcome ?? "Automated intake", position: "center" as const, emphasis: "primary" as const },
+        { text: "Book a 15-minute walkthrough", position: "bottom" as const, emphasis: "accent" as const },
       ],
-      graphicCue: archetype.scenes[2]?.graphicCue ?? "Outcome visual",
-      icon: archetype.scenes[2]?.icon ?? "TrendingUp",
+      graphicCue: cartoonScenes[1]?.visual_metaphor ?? "Solution animation",
+      icon: "Sparkles",
       transition: "zoom" as const,
     },
   ];
 
   return {
-    durationSec: 20,
+    durationSec: VIDEO_DURATION_SEC,
     headline: archetype.tagline(companyName),
     scenes,
-    voiceStyle: "Confident, warm, unhurried. Pause after the problem statement.",
+    voiceStyle:
+      "Premium launch-film narrator: confident, warm, unhurried. Gravity on the problem, rising optimism on the solution, inviting close.",
+    bottleneckCategory: category,
+    cartoonScenes,
   };
 };
 
@@ -599,10 +641,10 @@ export const mockEmail = (
     videoUrl ?? `https://velho.ai/v/${encodeURIComponent(domain)}`;
 
   const bodySentences = [
-    `I looked at ${companyName}'s ${archetype.problem.department.toLowerCase()} workflow and found something worth 30 seconds of your time: ${problem.title.toLowerCase()}.`,
+    `I looked at ${companyName}'s ${archetype.problem.department.toLowerCase()} workflow and found something worth 45 seconds of your time: ${problem.title.toLowerCase()}.`,
     `Right now ${problem.symptoms[0]?.toLowerCase() ?? "the process runs manually"}, which is quietly costing roughly ${problem.brokenSystems.length * 9} hours a week across the team.`,
     `We built ${archetype.solution.architectureName(companyName)} — ${archetype.solution.steps[0]?.outcome.toLowerCase() ?? "automated intake"} — and it runs on the systems you already have.`,
-    `I recorded a 20-second walkthrough using ${companyName}'s own workflow, not a generic demo: ${url}`,
+    `I recorded a 45-second walkthrough using ${companyName}'s own workflow, not a generic demo: ${url}`,
   ];
 
   const callToAction =
@@ -611,7 +653,7 @@ export const mockEmail = (
   const signoff = "— Velho Applied Intelligence";
 
   const plainText = [
-    `Subject: ${problem.title} at ${companyName} — 20 second video`,
+    `Subject: ${problem.title} at ${companyName} — 45 second video`,
     "",
     `Hi ${companyName} team,`,
     "",
@@ -624,7 +666,7 @@ export const mockEmail = (
 
   return {
     recipientRole: "CEO",
-    subject: `${problem.title} at ${companyName} — 20 second video`,
+    subject: `${problem.title} at ${companyName} — 45 second video`,
     greeting: `Hi ${companyName} team,`,
     bodySentences,
     callToAction,

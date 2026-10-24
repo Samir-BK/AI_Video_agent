@@ -2,6 +2,10 @@ import "server-only";
 
 import type {
   AgentEnvelope,
+  BottleneckCategory,
+  CartoonActor,
+  CartoonAnimationScene,
+  CartoonAnimationType,
   DiscoveryOutput,
   EmailOutput,
   ProblemOutput,
@@ -14,7 +18,13 @@ import type {
   VideoScriptOutput,
 } from "@/types/pipeline";
 import { createAgentMeta } from "@/types/pipeline";
-import { callLlm, extractJson, isLlmConfigured, LlmTimeoutError } from "@/lib/llm";
+import {
+  callLlm,
+  extractJson,
+  isLlmConfigured,
+  LlmNotConfiguredError,
+  LlmTimeoutError,
+} from "@/lib/llm";
 import {
   companyNameFromDomain,
   mockDiscovery,
@@ -24,6 +34,12 @@ import {
   mockVideoScript,
   selectArchetype,
 } from "@/lib/mockData";
+import {
+  buildCartoonScenes,
+  CARTOON_TIMELINE,
+  classifyBottleneck,
+  isBottleneckCategory,
+} from "@/lib/cartoonPresets";
 import { paletteFromColors, type ScrapeResult } from "@/lib/scraper";
 
 /**
@@ -120,6 +136,92 @@ const asEmphasis = (
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
+const asBottleneckCategory = (
+  value: unknown,
+  fallback: BottleneckCategory,
+): BottleneckCategory => (isBottleneckCategory(value) ? value : fallback);
+
+const ANIMATION_TYPES: readonly CartoonAnimationType[] = [
+  "shake",
+  "bounce",
+  "pulse",
+  "slide_in",
+  "spin_gear",
+  "fade_red_to_green",
+];
+
+const asAnimationType = (
+  value: unknown,
+  fallback: CartoonAnimationType,
+): CartoonAnimationType => {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  const match = ANIMATION_TYPES.find((type) => type === normalized);
+  return match ?? fallback;
+};
+
+/**
+ * Normalize model-authored actors, keeping only well-formed entries. An empty
+ * result means the caller should fall back to the deterministic preset.
+ */
+const asActors = (value: unknown, max = 4): CartoonActor[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(isRecord)
+    .map((candidate): CartoonActor | null => {
+      const name = asString(candidate.name, "");
+      const icon = asString(candidate.icon, "");
+      if (!name || !icon) return null;
+      return {
+        name,
+        icon,
+        animation_type: asAnimationType(candidate.animation_type, "pulse"),
+      };
+    })
+    .filter((actor): actor is CartoonActor => actor !== null)
+    .slice(0, max);
+};
+
+/**
+ * Validate the cartoon storyboard. Returns null when the model produced
+ * nothing usable, so the caller can substitute the category preset.
+ */
+const asCartoonScenes = (
+  value: unknown,
+): CartoonAnimationScene[] | null => {
+  if (!Array.isArray(value)) return null;
+
+  const scenes = value
+    .filter(isRecord)
+    .map((candidate, index): CartoonAnimationScene | null => {
+      const actors = asActors(candidate.actors);
+      const flow = asStringArray(candidate.flow_diagram_steps, [], 10);
+      const caption = asString(candidate.text_caption, "");
+      if (actors.length === 0 || flow.length === 0 || !caption) return null;
+
+      const isProblem =
+        asString(candidate.type, "") === "problem_animation" || index === 0;
+
+      return {
+        scene_index: index + 1,
+        time_range: asString(
+          candidate.time_range,
+          isProblem
+            ? `${CARTOON_TIMELINE.problemStart}s-${CARTOON_TIMELINE.problemEnd}s`
+            : `${CARTOON_TIMELINE.solutionStart}s-${CARTOON_TIMELINE.solutionEnd}s`,
+        ),
+        type: isProblem ? "problem_animation" : "solution_animation",
+        actors,
+        visual_metaphor: asString(candidate.visual_metaphor, ""),
+        flow_diagram_steps: flow,
+        text_caption: caption,
+      };
+    })
+    .filter((scene): scene is CartoonAnimationScene => scene !== null)
+    .slice(0, 2);
+
+  return scenes.length >= 1 ? scenes : null;
+};
+
 /* ------------------------------------------------------------------ */
 /* Envelope helper                                                     */
 /* ------------------------------------------------------------------ */
@@ -163,9 +265,22 @@ const runAgent = async <T,>(
   } catch (error) {
     const durationMs = Date.now() - startedAt;
     const timedOut = error instanceof LlmTimeoutError;
+
+    // Surface the actionable cause instead of a blanket "failed" note, so the
+    // pipeline log distinguishes "you never set a key" from "the key errored".
+    const note =
+      error instanceof LlmNotConfiguredError
+        ? error.message
+        : error instanceof LlmTimeoutError
+          ? `${agentName} hit the ${AGENT_TIMEOUT_MS}ms deadline; served fallback data`
+          : timedOut
+            ? `${agentName} timed out; served fallback data`
+            : fallbackNote;
+
     const reason =
       error instanceof Error ? error.message.slice(0, 160) : "unknown error";
-    return envelope(fallback(), "mock", durationMs, fallbackNote, {
+
+    return envelope(fallback(), "mock", durationMs, note, {
       timedOut,
       warnings: [`${agentName} fell back: ${reason}`],
     });
@@ -206,12 +321,11 @@ export const runDiscoveryAgent = async (
   return runAgent(
     "Discovery Agent",
     async () => {
-      if (!isLlmConfigured() || !scrape.ok) {
-        throw new Error(
-          !isLlmConfigured()
-            ? "No LLM key configured"
-            : `Scrape failed: ${scrape.error ?? "no content"}`,
-        );
+      // Check credentials first: it is the only failure with a clear fix, and
+      // the scrape error is meaningless if we could never call the model.
+      if (!isLlmConfigured()) throw new LlmNotConfiguredError();
+      if (!scrape.ok) {
+        throw new Error(`Scrape failed: ${scrape.error ?? "no content"}`);
       }
 
       const mock = mockDiscovery(domain);
@@ -310,7 +424,7 @@ export const runProblemAgent = async (
   return runAgent(
     "Problem Agent",
     async () => {
-      if (!isLlmConfigured()) throw new Error("No LLM key configured");
+      if (!isLlmConfigured()) throw new LlmNotConfiguredError();
 
       const mock = mockProblem(domain);
 
@@ -403,7 +517,7 @@ export const runSolutionAgent = async (
   return runAgent(
     "Solution Agent",
     async () => {
-      if (!isLlmConfigured()) throw new Error("No LLM key configured");
+      if (!isLlmConfigured()) throw new LlmNotConfiguredError();
 
       const mock = mockSolution(domain);
 
@@ -486,19 +600,34 @@ Design the 3-step Velho solution architecture.`,
 /* ------------------------------------------------------------------ */
 
 const VIDEO_SYSTEM = `You are the Video Script Agent for Velho Applied Intelligence.
-Write a 20-second, 3-scene video script personalized to the target company.
-The video is shown to the CEO. It must feel like it was made only for them.
-Timing is FIXED: scene 1 = 0-7s, scene 2 = 7-14s, scene 3 = 14-20s.
-Voiceover must be speakable in the allotted seconds: roughly 2.5 words per second (scene 1 ~18 words, scene 2 ~18 words, scene 3 ~15 words).
+Write a 45-second video personalized to the target company, shown to its CEO.
+The visuals are CARTOONISH VECTOR DIAGRAMS (clean flat SVG with simple animated characters, icons, arrows and flow nodes) — NOT stock footage.
+The visuals are WORDLESS: on-screen graphics carry no sentences, and the voiceover is the only narration.
+Timing is FIXED and must not drift: scene 1 = 0-6s (company identity intro), scene 2 = 6-24s (cartoonish PROBLEM animation), scene 3 = 24-45s (cartoonish SOLUTION flow + meeting CTA).
+Voiceover must be speakable in the allotted seconds, roughly 2.5 words per second (scene 1 ~14 words, scene 2 ~45 words, scene 3 ~52 words).
+Keep each voiceover one connected, natural piece of narration — do not pad with filler.
+The voiceover is read by a professional neural narrator, so write it like a premium B2B launch film: short, punchy, spoken sentences; no lists, symbols, URLs, parentheses or abbreviations; write numbers as a narrator would say them.
+Narrative arc (mandatory):
+- Scene 1: greet the company by name and say this video was made for them.
+- Scene 2: open with "Here is the problem." then name the bottleneck, what it looks like day to day, and the hours or money it costs.
+- Scene 3: open with "Now, the solution." then explain what Velho built for them, how it works in plain words, the outcome and time to go live, and END with a clear call to action that they can book a fifteen-minute walkthrough with one click, right below the video.
 Respond with ONLY a JSON object, no prose, no markdown fences.
+
+First classify the bottleneck into exactly one of these four categories, then author the two cartoon beats:
+- "quoting_and_order_intake" (quotes, RFQs, orders, bids, order entry)
+- "field_reporting" (field/job reports, proof of delivery, inspections)
+- "scheduling" (appointments, dispatch, rosters, shifts)
+- "cross_system_data" (same data re-keyed across disconnected systems)
+
 Schema:
 {
   "headline": string (landing page headline),
   "voiceStyle": string (delivery direction),
+  "bottleneckCategory": "quoting_and_order_intake" | "field_reporting" | "scheduling" | "cross_system_data",
   "scenes": [
     {
       "id": 1,
-      "startSec": 0, "endSec": 7,
+      "startSec": 0, "endSec": 6,
       "title": string (short scene label),
       "voiceover": string (spoken words only, no stage directions),
       "overlays": [
@@ -509,7 +638,30 @@ Schema:
       "transition": "fade"|"slide"|"zoom"|"wipe"
     }
   ] (exactly 3 scenes),
-}`;
+  "cartoonScenes": [
+    {
+      "scene_index": 1,
+      "time_range": "6s-24s",
+      "type": "problem_animation",
+      "actors": [
+        { "name": string (e.g. "Stressed Manager", "Manual Spreadsheet", "Exploding Inbox"), "icon": string (a real Lucide icon name, e.g. "FileSpreadsheet", "UserX", "Clock"), "animation_type": "shake"|"bounce"|"pulse"|"slide_in"|"spin_gear"|"fade_red_to_green" }
+      ] (2-4 actors),
+      "visual_metaphor": string (one vivid sentence describing the cartoon of THIS company's specific manual bottleneck),
+      "flow_diagram_steps": string[] (exactly a chain alternating node labels with "-->", e.g. ["Unstructured Email", "-->", "Manual Copy-Paste", "-->", "Excel Error"]),
+      "text_caption": string (6-10 word caption shown under the cartoon)
+    },
+    {
+      "scene_index": 2,
+      "time_range": "24s-45s",
+      "type": "solution_animation",
+      "actors": [ same shape as above — include the "Velho AI Engine" gear actor with "spin_gear" ],
+      "visual_metaphor": string (one vivid sentence: messy red inputs flowing into the Velho AI Engine and emerging as clean green automated outputs),
+      "flow_diagram_steps": string[] (chain ending in the automated outcome, e.g. ["RFQ PDF", "-->", "Velho AI Engine", "-->", "Auto ERP Entry"]),
+      "text_caption": string (6-10 word caption)
+    }
+  ] (exactly 2 beats: problem then solution)
+}
+Ground every actor, metaphor and flow step in this company's real tools, departments and symptoms. Never use generic placeholders.`;
 
 export const runVideoScriptAgent = async (
   discovery: DiscoveryOutput,
@@ -522,7 +674,7 @@ export const runVideoScriptAgent = async (
   return runAgent(
     "Video Script Agent",
     async () => {
-      if (!isLlmConfigured()) throw new Error("No LLM key configured");
+      if (!isLlmConfigured()) throw new LlmNotConfiguredError();
 
       const mock = mockVideoScript(domain);
       const archetype = selectArchetype(domain);
@@ -537,17 +689,19 @@ export const runVideoScriptAgent = async (
             role: "user",
             content: `Company: ${discovery.companyName} (${discovery.industry})
 Tagline: ${discovery.tagline}
+Department that hurts: ${problem.department}
+Their systems: ${problem.brokenSystems.join(", ")}
 
-Problem (scene 1): ${problem.title} — ${problem.summary}
+Bottleneck (drives the 6-24s cartoon): ${problem.title} — ${problem.summary}
+Symptoms: ${problem.symptoms.join(" | ")}
 Impact: ${problem.impact.hoursLostPerWeek} hrs/week, ${problem.impact.estimatedCost}
 
-Solution (scene 2): ${solution.architectureName} — ${solution.summary}
+Solution (drives the 24-45s cartoon): ${solution.architectureName} — ${solution.summary}
 Step 1 outcome: ${solution.steps[0]?.outcome ?? ""}
-
-Outcome (scene 3): ${solution.steps[2]?.outcome ?? solution.headlineMetric.delta}
+Integrations: ${solution.integrations.join(", ")}
 Time to value: ${solution.timeToValue}
 
-Write the 3-scene script. Speak directly to ${discovery.companyName}'s leadership.`,
+Classify the bottleneck, then write the 3-scene script with the two cartoon beats. Speak directly to ${discovery.companyName}'s leadership.`,
           },
         ],
       });
@@ -560,11 +714,30 @@ Write the 3-scene script. Speak directly to ${discovery.companyName}'s leadershi
         throw new Error("Video Script Agent returned no scenes");
       }
 
-      // Fixed timeline — never let the model drift off the 20s budget.
+      // Category: trust the model, otherwise classify locally — falling back
+      // to the matched domain archetype — so the cartoon renderer always has
+      // a specific layout to draw.
+      const category = asBottleneckCategory(
+        parsed.bottleneckCategory,
+        classifyBottleneck(
+          [
+            domain,
+            discovery.industry,
+            problem.title,
+            problem.summary,
+            problem.department,
+            ...problem.symptoms,
+          ],
+          domain,
+          archetype.bottleneckCategory,
+        ),
+      );
+
+      // Fixed timeline — never let the model drift off the 45s storyboard.
       const timeline = [
-        { start: 0, end: 7 },
-        { start: 7, end: 14 },
-        { start: 14, end: 20 },
+        { start: 0, end: CARTOON_TIMELINE.problemStart },
+        { start: CARTOON_TIMELINE.problemStart, end: CARTOON_TIMELINE.problemEnd },
+        { start: CARTOON_TIMELINE.solutionStart, end: CARTOON_TIMELINE.solutionEnd },
       ] as const;
 
       const scenes: VideoScene[] = timeline.map((slot, index) => {
@@ -604,11 +777,28 @@ Write the 3-scene script. Speak directly to ${discovery.companyName}'s leadershi
         };
       });
 
+      // Cartoon storyboard: prefer the model's authored beats, otherwise use
+      // the hand-authored preset for the classified category. Either way the
+      // video is specific to this company's bottleneck.
+      const presetScenes = buildCartoonScenes(
+        category,
+        discovery.companyName,
+      );
+      const authoredScenes = asCartoonScenes(parsed.cartoonScenes);
+
+      const cartoonScenes: CartoonAnimationScene[] = authoredScenes
+        ? [0, 1].map(
+            (index) => authoredScenes[index] ?? presetScenes[index]!,
+          )
+        : presetScenes;
+
       const data: VideoScriptOutput = {
-        durationSec: 20,
+        durationSec: CARTOON_TIMELINE.solutionEnd,
         headline: asString(parsed.headline, mock.headline),
         scenes,
         voiceStyle: asString(parsed.voiceStyle, mock.voiceStyle),
+        bottleneckCategory: category,
+        cartoonScenes,
       };
 
       return { data, source: "live" as ResultSource };
@@ -629,7 +819,7 @@ Hard rules:
 - Sentence 1: the specific bottleneck you found.
 - Sentence 2: what it costs them, quantified.
 - Sentence 3: what Velho built, in plain language.
-- Sentence 4: the personalized 20-second video link.
+- Sentence 4: the personalized 45-second video link.
 - Then a short CTA and a sign-off.
 Respond with ONLY a JSON object, no prose, no markdown fences.
 Schema:
@@ -653,7 +843,7 @@ export const runEmailAgent = async (
   return runAgent(
     "Copywriter Agent",
     async () => {
-      if (!isLlmConfigured()) throw new Error("No LLM key configured");
+      if (!isLlmConfigured()) throw new LlmNotConfiguredError();
 
       const mock = mockEmail(domain, videoUrl);
 

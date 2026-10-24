@@ -39,7 +39,7 @@ export const AGENT_DESCRIPTIONS: Record<AgentId, string> = {
   discovery: "Scrapes the domain and extracts brand + business model",
   problem: "Finds the operational bottleneck costing them hours",
   solution: "Maps Velho's AI capabilities onto that bottleneck",
-  videoScript: "Writes the 20-second 3-scene voiceover + overlays",
+  videoScript: "Writes the 45-second 3-scene voiceover + overlays",
   email: "Drafts the 4-sentence CEO cold email",
 };
 
@@ -194,9 +194,9 @@ export interface TextOverlay {
 export interface VideoScene {
   /** 1-based scene index. */
   id: number;
-  /** Inclusive start second within the 20s timeline. */
+  /** Inclusive start second within the 45s timeline. */
   startSec: number;
-  /** Exclusive end second within the 20s timeline. */
+  /** Exclusive end second within the 45s timeline. */
   endSec: number;
   title: string;
   /** Voiceover script spoken by speechSynthesis during this scene. */
@@ -210,6 +210,69 @@ export interface VideoScene {
   transition: SceneTransition;
 }
 
+/* ---------------- Cartoon animation contract ---------------- */
+
+/**
+ * The four bottleneck families the cartoon renderer knows how to draw.
+ * Every company is classified into exactly one, which guarantees the video
+ * still animates correctly even when the LLM returns no SVG instructions.
+ */
+export type BottleneckCategory =
+  | "quoting_and_order_intake"
+  | "field_reporting"
+  | "scheduling"
+  | "cross_system_data";
+
+export const BOTTLENECK_CATEGORIES: readonly BottleneckCategory[] = [
+  "quoting_and_order_intake",
+  "field_reporting",
+  "scheduling",
+  "cross_system_data",
+] as const;
+
+export const BOTTLENECK_CATEGORY_LABELS: Record<BottleneckCategory, string> = {
+  quoting_and_order_intake: "Quoting & Order Intake",
+  field_reporting: "Field Reporting",
+  scheduling: "Scheduling & Dispatch",
+  cross_system_data: "Cross-System Data",
+};
+
+/** Motion primitives the SVG renderer can apply to an actor. */
+export type CartoonAnimationType =
+  | "shake"
+  | "bounce"
+  | "pulse"
+  | "slide_in"
+  | "spin_gear"
+  | "fade_red_to_green";
+
+export interface CartoonActor {
+  /** Readable role, e.g. "Stressed Manager" or "Manual Spreadsheet". */
+  name: string;
+  /** Lucide icon name (e.g. "FileStack") or a raw SVG path string. */
+  icon: string;
+  animation_type: CartoonAnimationType;
+}
+
+export type CartoonSceneType = "problem_animation" | "solution_animation";
+
+/**
+ * Explicit, renderable animation instructions for one cartoon beat.
+ * The renderer maps this onto the SVG/CSS layer — no guessing at runtime.
+ */
+export interface CartoonAnimationScene {
+  scene_index: number;
+  /** Human-readable span, e.g. "6s-24s". */
+  time_range: string;
+  type: CartoonSceneType;
+  actors: CartoonActor[];
+  /** e.g. "Piles of unread PDF forms overflowing onto a desk". */
+  visual_metaphor: string;
+  /** Chain of nodes and connectors, e.g. ["Unstructured Email", "-->", "Excel Error"]. */
+  flow_diagram_steps: string[];
+  text_caption: string;
+}
+
 export interface VideoScriptOutput {
   /** Total runtime in seconds. */
   durationSec: number;
@@ -218,6 +281,27 @@ export interface VideoScriptOutput {
   scenes: VideoScene[];
   /** Voiceover delivery direction. */
   voiceStyle: string;
+  /** Drives which cartoon layout/fallback the renderer uses. */
+  bottleneckCategory: BottleneckCategory;
+  /** Exactly two beats: [problem_animation, solution_animation]. */
+  cartoonScenes: CartoonAnimationScene[];
+}
+
+/* ---------------- Neural voiceover contract ---------------- */
+
+/** Which engine voiced a clip. "browser" = speechSynthesis fallback. */
+export type VoiceoverProvider = "elevenlabs" | "openai" | "groq" | "browser";
+
+/** POST /api/voiceover body. */
+export interface VoiceoverRequest {
+  /** Spoken words only, one scene's narration. */
+  text: string;
+}
+
+/** Returned (as JSON) when no neural voice is available. */
+export interface VoiceoverUnavailable {
+  provider: "browser";
+  reason: string;
 }
 
 /* ------------------------------------------------------------------ */
