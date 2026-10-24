@@ -11,14 +11,16 @@ import {
 import { companyNameFromDomain, normalizeDomain } from "@/lib/mockData";
 import { writeRoleEmails, type RoleLinks, type RoleRequest } from "@/lib/outreach/emails";
 import { buildCostEstimate, parseHourlyCost } from "@/lib/outreach/pure/estimate";
+import { ruleFacts } from "@/lib/outreach/pure/ruleFacts";
+import { coreName } from "@/lib/outreach/pure/searchText";
 import { assessSufficiency } from "@/lib/outreach/pure/sufficiency";
 import { dedupeFacts, verifyFacts } from "@/lib/outreach/pure/verify";
 import { assignLeaderEmails } from "@/lib/outreach/research/contacts";
 import { legalNamesFromText, resolveEntity } from "@/lib/outreach/research/entity";
 import { extractFactsAndLeaders } from "@/lib/outreach/research/extract";
 import { jobAdsSource } from "@/lib/outreach/research/jobAds";
-import { runSource, type ResearchContext } from "@/lib/outreach/research/source";
-import { tavilySource } from "@/lib/outreach/research/tavily";
+import { nextFactId, nowIso, runSource, type ResearchContext } from "@/lib/outreach/research/source";
+import { suggestLinkedinProfiles, tavilySource } from "@/lib/outreach/research/tavily";
 import { websiteSource } from "@/lib/outreach/research/website";
 import { getOutreachStore } from "@/lib/outreach/store";
 import { normalizeOrigin, scrapeDomain } from "@/lib/scraper";
@@ -32,6 +34,7 @@ import type {
   ResearchLogEntry,
   SourcedFact,
 } from "@/types/outreach";
+import { EXEC_ROLES } from "@/types/outreach";
 
 /**
  * Runs the outreach layer end to end:
@@ -65,7 +68,7 @@ const groupSignals = (facts: SourcedFact[]): CompanySignals => ({
 
 export const runOutreach = async (
   request: OutreachRequest,
-  { appOrigin, onProgress, roles = ["CEO", "COO", "CFO"] }: RunOptions,
+  { appOrigin, onProgress, roles = [...EXEC_ROLES] }: RunOptions,
 ): Promise<OutreachResult> => {
   const startedAt = Date.now();
   const language: OutreachLanguage = request.language === "fi" ? "fi" : "en";
@@ -146,7 +149,7 @@ export const runOutreach = async (
   log.push(...web.log);
   if (web.pages.length > 0) emit("website", web.log[0]?.note ?? "Web search done");
 
-  const extractionPromise = extractFactsAndLeaders(companyName, [...website.pages, ...web.pages]);
+  const extractionPromise = extractFactsAndLeaders(companyName, [...website.pages, ...web.pages], domain);
   const jobs = await jobsPromise;
   log.push(...jobs.log);
   emit("jobs", jobs.log[0]?.note ?? "Job ads checked");
@@ -165,16 +168,47 @@ export const runOutreach = async (
   // Deterministic facts (register, job ads) are verified like model facts.
   const deterministicTexts = new Map<string, string>(entity.sourceTexts);
   for (const page of jobs.pages) deterministicTexts.set(page.url, page.text);
-  const deterministic = verifyFacts([...entity.facts, ...jobs.facts], deterministicTexts);
+
+  // Without a model, keyword rules pick goal / financial / change sentences
+  // from the same pages; each quote is the sentence itself, verified below.
+  const readPages = [...website.pages, ...web.pages];
+  const keywordFacts: SourcedFact[] = extraction.usedLlm
+    ? []
+    : ruleFacts(readPages, domain, [coreName(companyName), domain.split(".")[0] ?? ""]).map((fact) => ({
+        ...fact,
+        id: nextFactId("rule"),
+        retrievedAt: nowIso(),
+      }));
+  if (keywordFacts.length > 0) {
+    for (const page of readPages) deterministicTexts.set(page.url, page.text);
+    emit("extract", `${keywordFacts.length} fact(s) found by keyword rules (no LLM key)`);
+  }
+  const deterministic = verifyFacts([...entity.facts, ...jobs.facts, ...keywordFacts], deterministicTexts);
 
   const facts = dedupeFacts([...extraction.facts, ...deterministic.verified]);
   const rejectedFacts = extraction.rejected + deterministic.rejected.length;
 
   // Work addresses from the company's own site (never invented).
-  const contacts = await assignLeaderEmails(extraction.leaders, website.pages, domain);
-  const leaders = contacts.leaders;
+  const contacts = await assignLeaderEmails(
+    extraction.leaders,
+    website.pages,
+    domain,
+    companyName,
+    web.pages,
+  );
   log.push(contacts.log);
   emit("extract", contacts.log.note);
+
+  // Unverified LinkedIn suggestions, only with TAVILY_API_KEY (URL only).
+  const linkedin = await suggestLinkedinProfiles(contacts.leaders, [
+    companyName,
+    domain.replace(/^www\./, "").split(".")[0] ?? "",
+  ]);
+  const leaders = linkedin.leaders;
+  if (linkedin.log) {
+    log.push(linkedin.log);
+    emit("extract", linkedin.log.note);
+  }
 
   const ceo = leaders.find((leader) => leader.role === "CEO");
   const sufficiency = assessSufficiency(facts, Boolean(ceo?.name));
@@ -268,6 +302,7 @@ export const runOutreach = async (
     sufficiency,
     estimate,
     emails,
+    companySocials: contacts.socials,
     pipeline: {
       discovery: discovery.data,
       problem: problem.data,

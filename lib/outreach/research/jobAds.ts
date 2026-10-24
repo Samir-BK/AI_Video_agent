@@ -35,10 +35,18 @@ export const jobAdsSource: ResearchSource = {
   run: async (ctx): Promise<SourceOutput> => {
     const startedAt = Date.now();
     const company = ctx.entity?.name ?? ctx.companyName;
-    const brand = normalizeCompanyName(company).split(" ")[0] ?? "";
-    const searchUrl = `${SEARCH_URL}?haku=${encodeURIComponent(
-      normalizeCompanyName(company) || company,
-    )}`;
+    const core = normalizeCompanyName(company);
+    // Groups advertise under their brand, not the legal name: "Oy Karl Fazer
+    // Ab" posts as "Fazer". The domain label is used as that brand only when
+    // it is one of the legal name's words (fazer.com + "karl fazer").
+    const domainLabel = ctx.domain.replace(/^www\./, "").split(".")[0] ?? "";
+    const brandName =
+      domainLabel.length >= 4 && domainLabel !== core && core.split(" ").includes(domainLabel)
+        ? domainLabel
+        : null;
+    const names = brandName ? [brandName, core] : [core];
+    const brand = core.split(" ")[0] ?? "";
+    const searchUrl = `${SEARCH_URL}?haku=${encodeURIComponent(brandName ?? (core || company))}`;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -72,8 +80,10 @@ export const jobAdsSource: ResearchSource = {
       };
     }
 
-    const core = normalizeCompanyName(company);
-    const escapedCore = core.replace(/[^\p{L}\p{N} ]/gu, "");
+    const titlePatterns = names.map(
+      (name) =>
+        new RegExp(`(^|\\s)${name.replace(/[^\p{L}\p{N} ]/gu, "")}(lle|lla|n|lta|ssa|sta|ksi)?(\\s|$)`, "u"),
+    );
     const facts: SourcedFact[] = [];
     const seenRoles = new Set<string>();
     const retrievedAt = nowIso();
@@ -94,9 +104,8 @@ export const jobAdsSource: ResearchSource = {
       // more words) — "Christian Berner Oy" is not "Berner Oy".
       const titleNorm = normalizeCompanyName(title);
       const mentions =
-        advertiser === core ||
-        advertiser.startsWith(`${core} `) ||
-        new RegExp(`(^|\\s)${escapedCore}(lle|lla|n|lta|ssa|sta|ksi)?(\\s|$)`, "u").test(titleNorm);
+        names.some((name) => advertiser === name || advertiser.startsWith(`${name} `)) ||
+        titlePatterns.some((pattern) => pattern.test(titleNorm));
       if (!mentions || title.length < 12 || !slug || GENERIC_TITLES.test(title)) continue;
 
       // The same opening is often posted by both the company and an agency.
@@ -118,7 +127,7 @@ export const jobAdsSource: ResearchSource = {
     }
 
     return {
-      pages: [{ url: searchUrl, title: "Duunitori search", text: htmlToText(html), emails: [], links: [] }],
+      pages: [{ url: searchUrl, title: "Duunitori search", text: htmlToText(html), emails: [], links: [], socialLinks: [] }],
       facts,
       log: [
         {

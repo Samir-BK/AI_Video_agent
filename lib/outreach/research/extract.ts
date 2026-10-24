@@ -2,6 +2,7 @@ import "server-only";
 
 import { callLlm, extractJson, isLlmConfigured } from "@/lib/llm";
 import { mapTitleToRole, ROLE_KEYWORDS } from "@/lib/outreach/pure/roles";
+import { coreName, foldText } from "@/lib/outreach/pure/searchText";
 import {
   dedupeFacts,
   normalizeForMatch,
@@ -17,6 +18,7 @@ import type {
   LeaderProfile,
   SourcedFact,
 } from "@/types/outreach";
+import { EXEC_ROLES } from "@/types/outreach";
 
 /**
  * Turn fetched pages into verified facts and leadership profiles.
@@ -88,7 +90,7 @@ Respond with ONLY a JSON object:
   "facts": [ { "kind": "strategy_goal" | "financial" | "hiring" | "why_now" | "leader_statement", "text": string (one sentence in English), "quote": string, "quoteLang": "fi" | "en" | "sv", "sourceUrl": string } ],
   "financials": { "year": number, "revenueEur": number | null, "operatingProfitEur": number | null, "employees": number | null, "quote": string (the sentence or table row stating these figures), "sourceUrl": string } | null
 }
-Leaders: company-level executives only, especially the CEO (toimitusjohtaja), the CFO (talousjohtaja / finance director) and whoever runs operations, supply chain, production or logistics. At most 6.
+Leaders: company-level executives only: the CEO (toimitusjohtaja), the CFO (talousjohtaja / finance director), whoever runs operations, production or logistics, and the heads of IT (CTO / CIO / IT-johtaja), sales (myyntijohtaja / kaupallinen johtaja), HR (henkilöstöjohtaja) and customer service, purchasing or supply chain. At most 10.
 Facts: at most 8. Use "why_now" for recent changes: a new CEO or executive, cost cuts or change negotiations, expansion, acquisitions, new plants, record orders.
 Financials: only the latest year stated in the SOURCE; amounts in plain euros (52.7 MEUR = 52700000). Use null if not stated.
 Return empty arrays / null if nothing qualifies.`;
@@ -160,7 +162,7 @@ const emptyLeader = (role: ExecRole): LeaderProfile => ({
 /** Keep one leader per role, preferring the best-evidenced one. */
 const pickLeaders = (found: LeaderProfile[]): LeaderProfile[] => {
   const rank = { high: 0, medium: 1, low: 2 } as const;
-  return (["CEO", "COO", "CFO"] as const).map((role) => {
+  return EXEC_ROLES.map((role) => {
     const options = found
       .filter((leader) => leader.role === role)
       .sort((a, b) => rank[a.confidence] - rank[b.confidence]);
@@ -180,7 +182,16 @@ const NOT_NAME_WORDS = new Set([
   "team", "management", "leadership", "contact", "contacts", "yhteystiedot", "johtoryhmä",
   "hallitus", "toimitusjohtaja", "talousjohtaja", "johtaja", "oy", "oyj", "ab", "ltd",
   "finland", "suomi", "customer", "service", "read", "more", "lue", "lisää",
+  "pohjoismaat", "nordic", "nordics", "europe", "eurooppa", "skandinavia", "baltia", "koneenrakennus",
 ]);
+
+const hostOfUrl = (url: string): string => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+};
 
 const looksLikePersonName = (name: string): boolean =>
   name
@@ -205,15 +216,30 @@ const keywordIndexes = (text: string, keyword: string): number[] => {
  * Key-free fallback: find "Toimitusjohtaja Matti Meikäläinen" or
  * "Matti Meikäläinen, CEO" on leadership-like pages.
  */
-export const heuristicLeaders = (pages: FetchedPage[]): LeaderProfile[] => {
+export const heuristicLeaders = (
+  pages: FetchedPage[],
+  /** Company website host; pages elsewhere must name the company near the title. */
+  ownHost = "",
+  companyName = "",
+): LeaderProfile[] => {
   const found: LeaderProfile[] = [];
   const retrievedAt = nowIso();
   const candidates = pages.filter((page) => priorityOf(page.url) <= 3);
+  const host = ownHost.replace(/^www\./, "").toLowerCase();
+  const core = coreName(companyName);
 
   for (const page of candidates) {
-    for (const role of ["CEO", "CFO", "COO"] as const) {
+    // A news or directory page lists people from many companies: there, the
+    // company name must appear within 200 characters of the title.
+    const pageHost = hostOfUrl(page.url);
+    const offSite = host !== "" && pageHost !== host && !pageHost.endsWith(`.${host}`);
+    for (const role of EXEC_ROLES) {
       for (const keyword of ROLE_KEYWORDS[role]) {
         for (const index of keywordIndexes(page.text, keyword)) {
+          if (offSite) {
+            const near = page.text.slice(Math.max(0, index - 200), index + keyword.length + 200);
+            if (core.length < 3 || !foldText(near).includes(core)) continue;
+          }
           const start = Math.max(0, index - 60);
           const end = Math.min(page.text.length, index + keyword.length + 60);
           const windowText = page.text.slice(start, end);
@@ -264,9 +290,10 @@ export const heuristicLeaders = (pages: FetchedPage[]): LeaderProfile[] => {
 export const extractFactsAndLeaders = async (
   companyName: string,
   pages: FetchedPage[],
+  ownHost = "",
 ): Promise<ExtractionResult> => {
   const sourceTexts = new Map(pages.map((page) => [page.url, page.text]));
-  const fallbackLeaders = pickLeaders(heuristicLeaders(pages));
+  const fallbackLeaders = pickLeaders(heuristicLeaders(pages, ownHost, companyName));
 
   if (!isLlmConfigured() || pages.length === 0) {
     return {
@@ -410,7 +437,7 @@ export const extractFactsAndLeaders = async (
   const { verified, rejected: rejectedFacts } = verifyFacts(factCandidates, sourceTexts);
   rejected += rejectedFacts.length;
 
-  const leaders = pickLeaders([...verifiedLeaders, ...heuristicLeaders(pages)]);
+  const leaders = pickLeaders([...verifiedLeaders, ...heuristicLeaders(pages, ownHost, companyName)]);
   // Leader statements become public statements of the matching leader.
   for (const fact of verified) {
     if (fact.kind !== "leader_statement") continue;

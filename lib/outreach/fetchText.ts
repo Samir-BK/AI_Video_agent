@@ -1,5 +1,6 @@
 import "server-only";
 
+import { extractSocialLinks, hiddenEmails, structuredText } from "@/lib/outreach/pure/htmlData";
 import type { FetchedPage } from "@/types/outreach";
 
 /**
@@ -73,6 +74,8 @@ const extractEmails = (html: string): string[] => {
   for (const match of htmlToText(html).matchAll(EMAIL_PATTERN)) {
     found.add(match[0].toLowerCase());
   }
+  // Addresses hidden from bots (Cloudflare protection, "name(at)example.fi").
+  for (const address of hiddenEmails(html)) found.add(address);
   return [...found].slice(0, 100);
 };
 
@@ -134,7 +137,7 @@ export const fetchPageText = async (
 
     if (json) {
       if (!type.includes("json")) return null;
-      return { url: response.url || url, title: "", text: body, emails: [], links: [] };
+      return { url: response.url || url, title: "", text: body, emails: [], links: [], socialLinks: [] };
     }
 
     if (!type.includes("html")) return null;
@@ -142,10 +145,32 @@ export const fetchPageText = async (
     return {
       url: finalUrl,
       title: extractTitle(body),
-      text: htmlToText(body),
+      // Visible text plus structured data, so browser-rendered sites still read.
+      text: [htmlToText(body), structuredText(body)].filter(Boolean).join("\n").slice(0, MAX_TEXT),
       emails: extractEmails(body),
       links: extractLinks(body, finalUrl),
+      socialLinks: extractSocialLinks(body),
     };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/** Fetch a small text file (robots.txt, sitemap.xml) as-is. Never throws. */
+export const fetchRawText = async (url: string, timeoutMs: number): Promise<string | null> => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(timeoutMs, 300));
+  try {
+    const response = await fetch(url, {
+      headers: { "User-Agent": USER_AGENT },
+      redirect: "follow",
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    if (!response.ok) return null;
+    return (await response.text()).slice(0, MAX_HTML);
   } catch {
     return null;
   } finally {

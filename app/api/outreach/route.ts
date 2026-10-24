@@ -1,6 +1,7 @@
 import { normalizeDomain } from "@/lib/mockData";
 import { runOutreach } from "@/lib/outreach/orchestrator";
 import type { OutreachLanguage, OutreachStreamEvent } from "@/types/outreach";
+import { EXEC_ROLES } from "@/types/outreach";
 
 /**
  * POST /api/outreach  { domain, businessId?, language? }
@@ -60,7 +61,7 @@ export async function POST(request: Request): Promise<Response> {
       try {
         const result = await runOutreach(
           { domain, businessId, language },
-          { appOrigin, onProgress: send, roles: ["CEO", "COO", "CFO"] },
+          { appOrigin, onProgress: send, roles: [...EXEC_ROLES] },
         );
         send({ type: "result", result });
       } catch (error) {

@@ -1,6 +1,7 @@
 import { normalizeDomain } from "@/lib/mockData";
 import { getOutreachStore } from "@/lib/outreach/store";
 import type { ExecRole, RoleEmailStatus } from "@/types/outreach";
+import { emptyRoleCounts } from "@/types/outreach";
 
 /**
  * GET /api/outreach/views?domain=<domain>
@@ -23,7 +24,7 @@ export async function GET(request: Request): Promise<Response> {
   const result = domain ? store.getResult(domain) : null;
 
   const payload: ViewsResponse = {
-    views: domain ? store.getViews(domain) : { CEO: 0, COO: 0, CFO: 0 },
+    views: domain ? store.getViews(domain) : emptyRoleCounts(),
     statuses: Object.fromEntries(
       (result?.emails ?? []).map((email) => [email.token, email.status]),
     ),

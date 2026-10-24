@@ -64,3 +64,21 @@ test("resolveLeaderEmail never guesses without a pattern or a name", () => {
   assert.equal(resolveLeaderEmail("Mikko Keskinen", ["info@acme.fi"], mxYes).method, "none");
   assert.equal(resolveLeaderEmail(null, ["a.b@acme.fi"], mxYes).address, null);
 });
+
+test("resolveLeaderEmail: published format template, then an unverified guess", async () => {
+  const { resolveLeaderEmail } = await import("../../lib/outreach/pure/emailPattern.ts");
+  // A format notice ("etunimi.sukunimi@...") counts as the company's format.
+  const viaTemplate = resolveLeaderEmail(
+    "Eero Hautaniemi",
+    ["etunimi.sukunimi@lassila-tikanoja.fi", "ir@lassila-tikanoja.fi"],
+    () => true,
+    "lt.fi",
+  );
+  assert.equal(viaTemplate.address, "eero.hautaniemi@lassila-tikanoja.fi");
+  assert.equal(viaTemplate.method, "pattern");
+
+  const guess = resolveLeaderEmail("Edward Skärström", ["info@acme.fi"], () => false, "acme.fi");
+  assert.deepEqual(guess, { address: "edward.skarstrom@acme.fi", method: "guessed", confidence: "low" });
+
+  assert.equal(resolveLeaderEmail("Edward Skärström", [], () => false, null).method, "none");
+});

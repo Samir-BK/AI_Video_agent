@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Eye, History, Loader2 } from "lucide-react";
 
 import type { HistoryRow, RoleEmailStatus } from "@/types/outreach";
+import { CORE_ROLES, EXEC_ROLES, ROLE_LABELS } from "@/types/outreach";
 
 const STATUS_OPTIONS: { value: "" | RoleEmailStatus; label: string }[] = [
   { value: "", label: "Any status" },
@@ -24,10 +25,17 @@ const STATUS_STYLE: Record<RoleEmailStatus, string> = {
 };
 
 /**
- * Companies already researched on this server. Opening a row shows the stored
- * result in /outreach without researching again.
+ * Companies already researched on this server. "Open" shows the stored result
+ * on the research tab without researching again.
  */
-export default function HistorySearch() {
+interface HistorySearchProps {
+  /** Reload a stored run on this page (no new research). */
+  onOpen: (domain: string) => void;
+  /** Changes when a new run is stored, so the list refreshes. */
+  refreshKey?: string;
+}
+
+export default function HistorySearch({ onOpen, refreshKey }: HistorySearchProps) {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<"" | RoleEmailStatus>("");
   const [minViews, setMinViews] = useState(0);
@@ -65,7 +73,7 @@ export default function HistorySearch() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [q, status, minViews, sort]);
+  }, [q, status, minViews, sort, refreshKey]);
 
   return (
     <div className="space-y-4">
@@ -170,16 +178,19 @@ export default function HistorySearch() {
                     <Eye className="h-3 w-3" aria-hidden /> {row.totalViews}
                   </span>
                   <span className="block text-velho-muted">
-                    CEO {row.views.CEO} · COO {row.views.COO} · CFO {row.views.CFO}
+                    {EXEC_ROLES.filter((role) => CORE_ROLES.includes(role) || row.views[role] > 0)
+                      .map((role) => `${ROLE_LABELS[role]} ${row.views[role] ?? 0}`)
+                      .join(" · ")}
                   </span>
                 </td>
                 <td className="px-3 py-3">
-                  <a
-                    href={`/outreach?view=${encodeURIComponent(row.domain)}`}
+                  <button
+                    type="button"
+                    onClick={() => onOpen(row.domain)}
                     className="whitespace-nowrap rounded-lg bg-sky-500/15 px-3 py-1.5 text-xs font-semibold text-sky-200 hover:bg-sky-500/25"
                   >
                     Open
-                  </a>
+                  </button>
                 </td>
               </tr>
             ))}

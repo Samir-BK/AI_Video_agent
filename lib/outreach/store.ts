@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ExecRole, OutreachResult, RoleEmail, RoleEmailStatus } from "@/types/outreach";
+import { emptyRoleCounts } from "@/types/outreach";
 
 /**
  * Storage for generated outreach, video views and opt-outs.
@@ -145,7 +146,7 @@ const createFileStore = (): OutreachStore => {
     },
     getViews: (domain) => {
       // Only the current generation's links count (older runs are history).
-      const counts: Record<ExecRole, number> = { CEO: 0, COO: 0, CFO: 0 };
+      const counts: Record<ExecRole, number> = emptyRoleCounts();
       for (const email of data.results[domain]?.emails ?? []) {
         counts[email.role] += data.views[email.token] ?? 0;
       }
