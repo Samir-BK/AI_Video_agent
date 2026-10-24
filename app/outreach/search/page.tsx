@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { ArrowLeft, Radar } from "lucide-react";
 
 import CriteriaSearch from "@/app/outreach/search/components/CriteriaSearch";
+import HistorySearch from "@/app/outreach/search/components/HistorySearch";
 import NameSearch from "@/app/outreach/search/components/NameSearch";
 import SelectedCompany from "@/app/outreach/search/components/SelectedCompany";
 import type { CompanySummary } from "@/types/outreach";
@@ -19,7 +20,7 @@ type Tab = "name" | "criteria" | "history";
 const TABS: { id: Tab; label: string; ready: boolean }[] = [
   { id: "name", label: "By name", ready: true },
   { id: "criteria", label: "By criteria", ready: true },
-  { id: "history", label: "History", ready: false },
+  { id: "history", label: "History", ready: true },
 ];
 
 function SearchPage() {
@@ -107,6 +108,12 @@ function SearchPage() {
           <div ref={selectedRef}>
             {selected && <SelectedCompany key={selected.businessId} company={selected} />}
           </div>
+        </section>
+      )}
+
+      {tab === "history" && (
+        <section id="panel-history" role="tabpanel" aria-labelledby="tab-history">
+          <HistorySearch />
         </section>
       )}
 

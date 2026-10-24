@@ -25,6 +25,8 @@ export interface TokenRecord {
 export interface OutreachStore {
   saveResult: (result: OutreachResult) => void;
   getResult: (domain: string) => OutreachResult | null;
+  /** Every stored run, newest first (read-only; used by history search). */
+  listResults: () => OutreachResult[];
   resolveToken: (token: string) => TokenRecord | null;
   /** The stored email (and its result) behind a token. */
   getEmailByToken: (token: string) => { result: OutreachResult; email: RoleEmail } | null;
@@ -111,6 +113,8 @@ const createFileStore = (): OutreachStore => {
       persist(data);
     },
     getResult: (domain) => data.results[domain] ?? null,
+    listResults: () =>
+      Object.values(data.results).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     resolveToken: (token) => data.tokens[token] ?? null,
     getEmailByToken: (token) => {
       const record = data.tokens[token];

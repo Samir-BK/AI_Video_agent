@@ -70,3 +70,22 @@ test("queryFallbacks proposes accent variants and the longest word", async () =>
   assert.ok(queryFallbacks("polkky").includes("pölkky"));
   assert.equal(queryFallbacks("xyz").length, 0);
 });
+
+test("filterHistory matches partially, ignores accents, filters and sorts", async () => {
+  const { filterHistory } = await import("../../lib/outreach/pure/searchText.ts");
+  const row = (domain, companyName, createdAt, totalViews, statuses) => ({
+    domain, companyName, businessId: null, createdAt, totalViews,
+    emails: statuses.map((status) => ({ status, recipient: null })),
+  });
+  const rows = [
+    row("berner.fi", "Berner Oy", "2026-10-24T10:00:00Z", 1, ["draft"]),
+    row("wurth.fi", "Würth Oy", "2026-10-24T12:00:00Z", 5, ["opted_out"]),
+    row("kesla.com", "Kesla Oyj", "2026-10-24T11:00:00Z", 0, ["no_address"]),
+  ];
+  assert.deepEqual(filterHistory(rows, { q: "wurth" }).map((r) => r.domain), ["wurth.fi"]);
+  assert.deepEqual(filterHistory(rows, { q: "BERN" }).map((r) => r.domain), ["berner.fi"]);
+  assert.deepEqual(filterHistory(rows, {}).map((r) => r.domain), ["wurth.fi", "kesla.com", "berner.fi"]);
+  assert.deepEqual(filterHistory(rows, { sort: "views" }).map((r) => r.totalViews), [5, 1, 0]);
+  assert.deepEqual(filterHistory(rows, { status: "opted_out" }).map((r) => r.domain), ["wurth.fi"]);
+  assert.deepEqual(filterHistory(rows, { minViews: 1 }).length, 2);
+});

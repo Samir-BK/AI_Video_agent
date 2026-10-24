@@ -130,7 +130,7 @@ templates, and labels what fell back.
 npm ci
 npm run dev                              # then open http://localhost:3000/outreach
 npm run typecheck
-node --test tests/outreach/*.test.mjs    # 23 unit tests, no extra dependencies
+node --test tests/outreach/*.test.mjs    # 45 unit tests, no extra dependencies
 ```
 
 Stored results, views and opt-outs live in memory and in
@@ -150,9 +150,12 @@ lib/outreach/senders.ts               draft / dry-run / Resend adapter
 lib/outreach/store.ts                 results, tokens, views, opt-outs
 lib/outreach/fetchText.ts             full-text page fetcher
 lib/outreach/research/*.ts            website, PRH, entity, job ads, Tavily, extraction, contacts
-lib/outreach/pure/*.ts                verification, roles, sufficiency, estimate, email pattern, .eml
-app/api/outreach/**                   stream, send, eml, unsubscribe, views
-app/outreach/**                       dashboard
+lib/outreach/search/*.ts              PRH search client, website resolution, criteria engine, enrichment
+lib/outreach/pure/*.ts                verification, roles, sufficiency, estimate, email pattern, .eml,
+                                      search text/filters/scoring/signals, PRH record parsing
+app/api/outreach/**                   stream, send, eml, unsubscribe, views, result
+app/api/outreach/search/**            companies, resolve, criteria (SSE), history
+app/outreach/**                       dashboard + search page (/outreach/search)
 app/v/[domain]/**                     personal video page (fixes the former 404)
 app/unsubscribe/page.tsx              unsubscribe confirmation
 tests/outreach/*.test.mjs             node:test unit tests
@@ -160,7 +163,73 @@ tests/outreach/*.test.mjs             node:test unit tests
 
 ---
 
-## 9. Known limitations
+## 9. Search (`/outreach/search`)
+
+Three tabs, all ending in the existing per-company outreach (no batch runs).
+Company data only — there is no search by person. Data: PRH / YTJ open data,
+CC BY 4.0 (attribution shown on the page).
+
+### By name
+Live suggestions from the trade register (300 ms debounce, stale requests
+cancelled, ↑ ↓ Enter Esc). Shows current and previous names, business ID,
+city, business line, age and status (dissolved / liquidation / bankruptcy).
+When nothing matches it retries the longest word ("lassila tikanoja" →
+Lassila & Tikanoja Oyj) and accent variants ("wurth" → Würth Oy).
+Picking a company resolves its website (below) and hands off to
+`/outreach?domain=…&businessId=…&auto=1`, so the entity match is exact.
+Typing a company name instead of a domain on `/outreach` opens this tab.
+
+### Website resolution — never an unverified guess
+1. The website registered in PRH, if it responds.
+2. Otherwise candidates from the legal name (`berner.fi`, `lassila-tikanoja.fi`, …),
+   each accepted only when DNS resolves **and** the homepage contains the legal
+   name (current or previous) or the business ID. The matching excerpt is shown.
+3. Otherwise "website not found" and the operator can type it.
+This is deliberately strict: a site that says "Kesla" but never "Kesla Oyj" is
+not accepted automatically.
+
+### By criteria
+Industry groups (or raw TOL codes), region (largest towns first) plus extra
+towns, minimum age (default 10 years).
+
+| Observed PRH behaviour (probed 24 Oct 2026) | How the code handles it |
+|---|---|
+| Classification is **TOL 2025**, with some TOL 2008 codes still present | Groups list verified codes from both (e.g. 41000 and 41200) |
+| `mainBusinessLine` matches **substrings** ("5210" also returns 25210) | Results post-filtered by code prefix |
+| `location` takes a town, and matches **any** registered address | Regions expand to towns; ~1 % of rows show a head office elsewhere |
+| 100 rows per page; a page beyond the end returns nothing; 429 exists | Paged by `totalResults`, ≤3 in flight, ~5 req/s, one retry |
+| Pre-1978 companies share registration date 1978-03-15 | Shown as "registered before 1978" |
+| Only ~20 % of companies have a registered website | Website resolution above, top 25 only |
+
+Limits: ≤24 register queries, ≤300 candidates, 30-minute cache. The result
+says when and why it stopped early (candidate cap or query budget).
+
+Excluded by default (and counted): dissolved, liquidation/bankruptcy,
+housing / real-estate companies, foundations / associations.
+
+**Score (0–100), every point explained** — weights in `SCORE_WEIGHTS`
+(`lib/outreach/pure/searchScore.ts`): base 30 · age +10/+15/+20 · limited
+company +10 · rename in last 3 years +10 · registered/verified website +5 ·
+no website −20 · hiring manual-work roles +30 / other roles +10 · stated size
+20–250 +10, outside −10.
+
+**Enrichment of the top 25**, streamed row by row (5 in parallel, job board 2
+at a time, ≤6 s per company, ≤40 s total): website, Duunitori open positions
+(manual-work roles flagged ●), and an employee count only when the company's
+own site states it (quote + source). A timed-out website check is "unknown",
+not penalised. "Only hiring" and "only known size" filter the checked rows.
+CSV export includes all signals and the score explanation.
+
+### History
+Companies already researched on this server, searchable by partial,
+accent-insensitive company name, domain or contact, filterable by email status
+and minimum video views, sortable by date or views. "Open" reloads the stored
+result in `/outreach` without new research (`/api/outreach/result`).
+The default store is per machine — see `docs/OUTREACH_INTEGRATION.md` §5.
+
+---
+
+## 10. Known limitations
 
 - **Model path untested on this branch** — it was developed without an LLM key, so
   every email in testing came from validated templates. With a key, goals,
@@ -173,3 +242,7 @@ tests/outreach/*.test.mjs             node:test unit tests
 - The default store is a temp-dir JSON file: fine locally, **not shared between
   serverless instances** — see `docs/OUTREACH_INTEGRATION.md`.
 - Resend and Tavily adapters are implemented but untested here (no keys).
+- Search: stated employee counts are rare on Finnish company sites (0 of 16
+  checked in one wholesale test), so "only known size" is off by default.
+  Industry groups cover five Velho-relevant sectors; other sectors work via
+  raw TOL 2025 codes.

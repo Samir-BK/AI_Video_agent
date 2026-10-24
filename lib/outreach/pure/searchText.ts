@@ -151,3 +151,45 @@ export const queryFallbacks = (query: string, max = 3): string[] => {
   }
   return out.slice(0, max);
 };
+
+/* ------------------------------------------------------------------ */
+/* History search                                                       */
+/* ------------------------------------------------------------------ */
+
+interface HistoryLike {
+  domain: string;
+  companyName: string;
+  businessId: string | null;
+  createdAt: string;
+  totalViews: number;
+  emails: { status: string; recipient: string | null }[];
+}
+
+/**
+ * Filter and sort stored outreach runs. Matching is case- and
+ * accent-insensitive and partial ("wurth" finds "Würth Oy", "bern" finds
+ * "berner.fi").
+ */
+export const filterHistory = <T extends HistoryLike>(
+  rows: T[],
+  { q, status, minViews, sort }: { q?: string; status?: string; minViews?: number; sort?: "date" | "views" },
+): T[] => {
+  const needle = foldText(q ?? "");
+  return rows
+    .filter((row) => {
+      if (needle) {
+        const haystack = foldText(
+          [row.companyName, row.domain, row.businessId ?? "", ...row.emails.map((e) => e.recipient ?? "")].join(" "),
+        );
+        if (!haystack.includes(needle)) return false;
+      }
+      if (status && !row.emails.some((email) => email.status === status)) return false;
+      if (minViews !== undefined && row.totalViews < minViews) return false;
+      return true;
+    })
+    .sort((a, b) =>
+      sort === "views"
+        ? b.totalViews - a.totalViews || b.createdAt.localeCompare(a.createdAt)
+        : b.createdAt.localeCompare(a.createdAt),
+    );
+};

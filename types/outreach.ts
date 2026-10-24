@@ -426,3 +426,25 @@ export type CriteriaStreamEvent =
   | { type: "enriched"; businessId: string; scored: ScoredCompany }
   | { type: "enrichment_done"; done: number; timedOut: number; durationMs: number }
   | { type: "error"; message: string };
+
+/* ---------------------------- History search ----------------------------- */
+
+export interface HistoryRow {
+  domain: string;
+  companyName: string;
+  businessId: string | null;
+  createdAt: string;
+  language: OutreachLanguage;
+  sufficiency: Sufficiency;
+  /** Role -> email status for the emails written in that run. */
+  emails: { role: ExecRole; status: RoleEmailStatus; recipient: string | null }[];
+  views: Record<ExecRole, number>;
+  totalViews: number;
+}
+
+export interface HistoryQuery {
+  q?: string;
+  status?: RoleEmailStatus;
+  minViews?: number;
+  sort?: "date" | "views";
+}

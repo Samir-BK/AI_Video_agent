@@ -162,6 +162,25 @@ function OutreachPage() {
   useEffect(() => {
     if (handledParams.current) return;
     handledParams.current = true;
+
+    // ?view=<domain>: reopen a stored run from history (no new research).
+    const viewDomain = searchParams.get("view") ?? "";
+    if (viewDomain) {
+      setDomain(viewDomain);
+      fetch(`/api/outreach/result?domain=${encodeURIComponent(viewDomain)}`)
+        .then(async (response) => {
+          const payload = (await response.json()) as { result?: OutreachResult; error?: string };
+          if (payload.result) {
+            setResult(payload.result);
+            setLanguage(payload.result.language);
+          } else {
+            setError(payload.error ?? "Stored result not found");
+          }
+        })
+        .catch(() => setError("Could not load the stored result."));
+      return;
+    }
+
     const paramDomain = searchParams.get("domain") ?? "";
     if (!paramDomain) return;
     const paramLanguage: OutreachLanguage = searchParams.get("lang") === "fi" ? "fi" : "en";
