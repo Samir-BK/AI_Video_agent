@@ -120,7 +120,7 @@ templates, and labels what fell back.
 | `OUTREACH_TEST_EMAIL` | Team inbox for dry runs | — |
 | `OUTREACH_DAILY_LIMIT_PER_INBOX` | Daily cap | `40` |
 | `NEXT_PUBLIC_APP_URL` | Public base URL for video/unsubscribe links | request origin |
-| `NEXT_PUBLIC_BOOKING_URL` | Calendly/Cal.com link for "Book 15 minutes" (existing) | mailto fallback |
+| `NEXT_PUBLIC_BOOKING_URL` | Calendar opened by "Book 15 minutes" and the video CTA | `https://ops.velho.io/book/patrik/intro` |
 
 ---
 

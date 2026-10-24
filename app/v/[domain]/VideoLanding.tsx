@@ -180,6 +180,8 @@ export default function VideoLanding({
 
       <a
         href={bookingUrl}
+        target="_blank"
+        rel="noopener noreferrer"
         className="flex items-center justify-center gap-2 rounded-xl bg-sky-500 px-5 py-4 text-base font-semibold text-white transition hover:bg-sky-400"
       >
         <CalendarCheck className="h-5 w-5" />
