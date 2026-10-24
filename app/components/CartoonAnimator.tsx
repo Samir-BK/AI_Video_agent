@@ -38,13 +38,14 @@ import {
  * the single caption strip owned by `VideoPlayer`, so the artwork never competes
  * with — or duplicates — a wall of on-screen prose.
  *
- * Three phases map onto the fixed storyboard:
- *   intro   (0-6s)   company identity + target website graphic
- *   problem (6-24s)  cartoonish bottleneck animation (red/amber)
- *   solution(24-45s) Velho AI pipeline (green/blue) + meeting CTA
+ * Four phases map onto the fixed storyboard:
+ *   intro    (0-6s)   company identity + target website graphic
+ *   problem  (6-24s)  cartoonish bottleneck animation (red/amber)
+ *   solution (24-38s) Velho AI pipeline (green/blue)
+ *   booking  (38-45s) one-click meeting end card
  */
 
-export type CartoonPhase = "intro" | "problem" | "solution";
+export type CartoonPhase = "intro" | "problem" | "solution" | "booking";
 
 export interface CartoonAnimatorProps {
   phase: CartoonPhase;
@@ -59,6 +60,8 @@ export interface CartoonAnimatorProps {
   /** Seconds elapsed in the 45s timeline — drives the intro progress ring. */
   elapsedSec: number;
   paused: boolean;
+  /** Storyboard playback rate — CSS loops follow the same clock. */
+  playRate?: number;
   className?: string;
 }
 
@@ -460,7 +463,7 @@ function FlowChain({ steps, mode, accent, y, delayBase }: FlowChainProps) {
 interface CanvasFrameProps {
   title: string;
   categoryLabel: string;
-  mode: "intro" | "problem" | "solution";
+  mode: "intro" | "problem" | "solution" | "booking";
   accent: string;
   backdrop: BackdropMotif;
   children: React.ReactNode;
@@ -501,7 +504,14 @@ function BackdropPattern({ id, motif }: { id: string; motif: BackdropMotif }) {
 /** Shared stage: ambient wash, backdrop motif, rounded frame and corner chrome. */
 function CanvasFrame({ title, categoryLabel, mode, accent, backdrop, children }: CanvasFrameProps) {
   // Problem stays alarm-red; the solution blends success green with the brand.
-  const wash = mode === "problem" ? "#F43F5E" : mode === "solution" ? "#10B981" : accent;
+  const wash =
+    mode === "problem"
+      ? "#F43F5E"
+      : mode === "solution"
+        ? "#10B981"
+        : mode === "booking"
+          ? "#6EE7B7"
+          : accent;
   const dotId = `dots-${mode}`;
   const glowId = `glow-${mode}`;
 
@@ -872,6 +882,67 @@ function CartoonStage({ scene, category, companyName, accent, palette, mode, var
 }
 
 /* ------------------------------------------------------------------ */
+/* Phase: booking (38-45s) — one-click meeting end card                */
+/* ------------------------------------------------------------------ */
+
+function BookingScene({
+  companyName,
+  accent,
+}: {
+  companyName: string;
+  accent: string;
+}) {
+  return (
+    <g>
+      <rect
+        x={VIEW_W / 2 - 118}
+        y={78}
+        width={236}
+        height={168}
+        rx={22}
+        fill="rgba(8,9,13,0.72)"
+        stroke={`${accent}66`}
+        strokeWidth={1.4}
+      />
+      <rect
+        x={VIEW_W / 2 - 118}
+        y={78}
+        width={236}
+        height={28}
+        rx={22}
+        fill={accent}
+        opacity={0.22}
+      />
+      <circle cx={VIEW_W / 2} cy={148} r={28} fill={`${accent}24`} stroke={accent} strokeWidth={1.6} />
+      <IconGlyph
+        name="CalendarClock"
+        x={VIEW_W / 2}
+        y={148}
+        size={26}
+        color={accent}
+        strokeWidth={2}
+      />
+      <text
+        x={VIEW_W / 2}
+        y={204}
+        textAnchor="middle"
+        style={{ fill: "#fff", fontSize: 15, fontWeight: 700, letterSpacing: 0.2 }}
+      >
+        15-minute walkthrough
+      </text>
+      <text
+        x={VIEW_W / 2}
+        y={224}
+        textAnchor="middle"
+        style={{ fill: "rgba(255,255,255,0.55)", fontSize: 11, fontWeight: 600 }}
+      >
+        One click for {truncate(companyName, 22)}
+      </text>
+    </g>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Entry point                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -886,9 +957,10 @@ export default function CartoonAnimator({
   palette,
   elapsedSec,
   paused,
+  playRate = 1,
   className,
 }: CartoonAnimatorProps) {
-  const mode: "intro" | "problem" | "solution" = phase ?? "intro";
+  const mode: CartoonPhase = phase ?? "intro";
   // A near-black or grey brand accent vanishes on the dark stage.
   const accent = legibleOnDark(palette.accent) ?? legibleOnDark(palette.primary) ?? "#7DD3FC";
   const categoryLabel = BOTTLENECK_CATEGORY_LABELS[category] ?? "Operations";
@@ -899,15 +971,24 @@ export default function CartoonAnimator({
       ? `${companyName} — company intro`
       : mode === "problem"
         ? cartoonScene?.visual_metaphor ?? `${companyName} bottleneck`
-        : cartoonScene?.visual_metaphor ?? `${companyName} solution`;
+        : mode === "booking"
+          ? `Book a meeting with ${companyName}`
+          : cartoonScene?.visual_metaphor ?? `${companyName} solution`;
 
   return (
     <div
       className={`absolute inset-0 ${paused ? "velho-anim-paused" : ""} ${className ?? ""}`}
+      style={{ ["--velho-play-rate" as string]: String(playRate) }}
     >
       <CanvasFrame
         title={title}
-        categoryLabel={mode === "intro" ? "Personalized intro" : categoryLabel}
+        categoryLabel={
+          mode === "intro"
+            ? "Personalized intro"
+            : mode === "booking"
+              ? "Book a meeting"
+              : categoryLabel
+        }
         mode={mode}
         accent={accent}
         backdrop={variant.backdrop}
@@ -922,6 +1003,8 @@ export default function CartoonAnimator({
             accent={accent}
             elapsedSec={elapsedSec}
           />
+        ) : mode === "booking" ? (
+          <BookingScene companyName={companyName} accent={accent} />
         ) : cartoonScene ? (
           <CartoonStage
             key={`${mode}-${cartoonScene.scene_index}`}

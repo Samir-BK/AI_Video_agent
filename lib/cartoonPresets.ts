@@ -391,18 +391,22 @@ export interface CartoonTimeline {
   problemEnd: number;
   solutionStart: number;
   solutionEnd: number;
+  bookingStart: number;
+  bookingEnd: number;
 }
 
-/** Fixed 45s beat map: intro (0-6), problem (6-24), solution (24-45). */
+/** Fixed 45s beat map: intro (0-6), problem (6-24), solution (24-38), book (38-45). */
 export const CARTOON_TIMELINE: CartoonTimeline = {
   problemStart: 6,
   problemEnd: 24,
   solutionStart: 24,
-  solutionEnd: 45,
+  solutionEnd: 38,
+  bookingStart: 38,
+  bookingEnd: 45,
 };
 
 /** Total runtime of the personalized video, in seconds. */
-export const VIDEO_DURATION_SEC = CARTOON_TIMELINE.solutionEnd;
+export const VIDEO_DURATION_SEC = CARTOON_TIMELINE.bookingEnd;
 
 export const buildCartoonScenes = (
   category: BottleneckCategory,

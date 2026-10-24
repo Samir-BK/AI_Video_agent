@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ShieldCheck, Sparkles, TrendingUp, X } from "lucide-react";
+import { CalendarClock, ShieldCheck, Sparkles, TrendingUp, X } from "lucide-react";
 
 import { buildBookingUrl } from "@/lib/booking";
+import { CARTOON_TIMELINE } from "@/lib/cartoonPresets";
 
 import CartoonAnimator, {
   type CartoonPhase,
@@ -86,7 +87,15 @@ export default function MobileModal({
   // Derive the phase from the scene boundaries so the phone preview can never
   // drift out of sync with a retimed storyboard.
   const phase: CartoonPhase =
-    activeScene.id <= 1 ? "intro" : activeScene.id === 2 ? "problem" : "solution";
+    activeScene.id <= 1
+      ? "intro"
+      : activeScene.id === 2
+        ? "problem"
+        : activeScene.id >= 4
+          ? "booking"
+          : elapsed >= CARTOON_TIMELINE.bookingStart
+            ? "booking"
+            : "solution";
   const phaseBeat =
     phase === "intro"
       ? null
@@ -198,6 +207,21 @@ export default function MobileModal({
 
                       {/* Cinematic scrim so the overlay text stays legible */}
                       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/85 via-black/40 to-transparent" />
+
+                      {phase === "booking" && (
+                        <a
+                          href={buildBookingUrl(discovery.companyName, discovery.domain)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="pointer-events-auto absolute bottom-[38%] left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3.5 py-2 text-[11px] font-bold text-zinc-900 shadow-lg"
+                          style={{
+                            background: `linear-gradient(135deg, ${palette.accent}, #6EE7B7)`,
+                          }}
+                        >
+                          <CalendarClock className="h-3.5 w-3.5" strokeWidth={2.5} />
+                          Book meeting — one click
+                        </a>
+                      )}
 
                       {/* Scene overlay text */}
                       <div className="absolute inset-x-0 bottom-0 p-4">

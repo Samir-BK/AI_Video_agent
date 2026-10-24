@@ -671,7 +671,8 @@ export const mockVideoScript = (
    * Timing is fixed by the cartoon storyboard (45s total):
    *   0-6s    company identity intro
    *   6-24s   cartoonish problem animation
-   *   24-45s  cartoonish solution flow + meeting CTA
+   *   24-38s  cartoonish solution flow
+   *   38-45s  one-click meeting bookend
    *
    * Each scene's narration is written as a continuous, spoken piece and then
    * fitted to its own slot, so the narrator is never still describing the
@@ -721,22 +722,39 @@ export const mockVideoScript = (
     {
       id: 3,
       startSec: 24,
-      endSec: 45,
+      endSec: 38,
       title: archetype.scenes[1]?.title ?? "The Velho fix",
       voiceover: prepareVoiceover(
         `Now, the solution. ${solutionSpoken}` +
-          `It goes live in about ${weeksToValue} weeks. ` +
-          `Your prototype is ready. Book a fifteen-minute walkthrough right below this video.`,
-        21,
+          `It goes live in about ${weeksToValue} weeks.`,
+        14,
       ),
       overlays: [
         { text: liveSolution.architectureName, position: "top" as const, emphasis: "secondary" as const },
         { text: cartoonScenes[1]?.text_caption ?? liveSolution.steps[0]?.outcome ?? "Automated intake", position: "center" as const, emphasis: "primary" as const },
-        { text: "Book a 15-minute walkthrough", position: "bottom" as const, emphasis: "accent" as const },
+        { text: liveSolution.headlineMetric.delta, position: "bottom" as const, emphasis: "accent" as const },
       ],
       graphicCue: cartoonScenes[1]?.visual_metaphor ?? "Solution animation",
       icon: "Sparkles",
       transition: "zoom" as const,
+    },
+    {
+      id: 4,
+      startSec: 38,
+      endSec: 45,
+      title: "Book a meeting",
+      voiceover: prepareVoiceover(
+        `Your prototype is ready. Book a fifteen-minute walkthrough with one click.`,
+        7,
+      ),
+      overlays: [
+        { text: companyName, position: "top" as const, emphasis: "secondary" as const },
+        { text: "Book a meeting — one click", position: "center" as const, emphasis: "primary" as const },
+        { text: "15-minute walkthrough", position: "bottom" as const, emphasis: "accent" as const },
+      ],
+      graphicCue: "One-click calendar lockup",
+      icon: "CalendarClock",
+      transition: "fade" as const,
     },
   ];
 
