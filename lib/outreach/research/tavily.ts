@@ -1,7 +1,8 @@
 import "server-only";
 
+import { displayCompanyName, pickLinkedinProfile } from "@/lib/outreach/pure/linkedin";
 import type { ResearchSource, SourceOutput } from "@/lib/outreach/research/source";
-import type { FetchedPage } from "@/types/outreach";
+import type { FetchedPage, LeaderProfile, ResearchLogEntry } from "@/types/outreach";
 
 /**
  * Optional web search via Tavily — active only when TAVILY_API_KEY is set.
@@ -13,6 +14,7 @@ import type { FetchedPage } from "@/types/outreach";
 const ENDPOINT = "https://api.tavily.com/search";
 const TIMEOUT_MS = 5500;
 const MAX_RESULTS = 4;
+const EMAIL_IN_TEXT = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
 
 interface TavilyResult {
   url?: string;
@@ -23,7 +25,17 @@ interface TavilyResult {
 
 export const isTavilyConfigured = (): boolean => Boolean(process.env.TAVILY_API_KEY?.trim());
 
-const search = async (query: string, apiKey: string): Promise<TavilyResult[]> => {
+interface SearchOptions {
+  maxResults?: number;
+  includeRawContent?: boolean;
+  includeDomains?: string[];
+}
+
+const search = async (
+  query: string,
+  apiKey: string,
+  { maxResults = MAX_RESULTS, includeRawContent = true, includeDomains }: SearchOptions = {},
+): Promise<TavilyResult[]> => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
@@ -33,8 +45,9 @@ const search = async (query: string, apiKey: string): Promise<TavilyResult[]> =>
       body: JSON.stringify({
         query,
         search_depth: "basic",
-        max_results: MAX_RESULTS,
-        include_raw_content: true,
+        max_results: maxResults,
+        include_raw_content: includeRawContent,
+        ...(includeDomains ? { include_domains: includeDomains } : {}),
       }),
       signal: controller.signal,
       cache: "no-store",
@@ -63,6 +76,9 @@ export const tavilySource: ResearchSource = {
     const queries = [
       `"${company}" toimitusjohtaja talousjohtaja johtoryhmä`,
       `"${company}" strategia tavoite kasvu investointi`,
+      // Press releases end with "Lisätietoja: name, title, etunimi.sukunimi@...",
+      // which shows the company's personal address format.
+      `"${company}" lisätietoja sähköposti toimitusjohtaja`,
     ];
     const results = (await Promise.all(queries.map((query) => search(query, apiKey)))).flat();
 
@@ -70,7 +86,8 @@ export const tavilySource: ResearchSource = {
     for (const result of results) {
       const text = (result.raw_content || result.content || "").trim();
       if (!result.url || text.length < 200 || byUrl.has(result.url)) continue;
-      // Social networks are out of scope (no scraping or profiling of people).
+      // Social networks never feed fact extraction (no profiling of people);
+      // LinkedIn profile URLs are suggested separately, see below.
       if (/(linkedin|facebook|instagram|twitter|x)\.com/i.test(new URL(result.url).hostname)) {
         continue;
       }
@@ -78,8 +95,10 @@ export const tavilySource: ResearchSource = {
         url: result.url,
         title: result.title ?? "",
         text: text.slice(0, 200_000),
-        emails: [],
+        // Addresses in the text; contacts keeps only the company's own domains.
+        emails: [...new Set((text.match(EMAIL_IN_TEXT) ?? []).map((address) => address.toLowerCase()))].slice(0, 50),
         links: [],
+        socialLinks: [],
       });
     }
 
@@ -97,4 +116,56 @@ export const tavilySource: ResearchSource = {
       ],
     };
   },
+};
+
+const MAX_LINKEDIN_LOOKUPS = 7;
+
+/**
+ * Suggest a LinkedIn profile for each named leader that the company site did
+ * not link, from one web search per person (LinkedIn results only, titles and
+ * snippets only — LinkedIn itself is never fetched). A suggestion needs the
+ * full name in the result title and the company in the title or snippet; it
+ * is still shown as unverified, and only the URL is kept.
+ */
+export const suggestLinkedinProfiles = async (
+  leaders: LeaderProfile[],
+  companyNames: string[],
+): Promise<{ leaders: LeaderProfile[]; log: ResearchLogEntry | null }> => {
+  const apiKey = process.env.TAVILY_API_KEY?.trim() ?? "";
+  if (!apiKey) return { leaders, log: null };
+
+  const startedAt = Date.now();
+  const company = displayCompanyName(companyNames[0] ?? "");
+  const wanted = leaders
+    .filter((leader) => leader.name && !leader.linkedinUrl)
+    .slice(0, MAX_LINKEDIN_LOOKUPS);
+  const found = new Map<string, string>();
+  await Promise.all(
+    wanted.map(async (leader) => {
+      const name = leader.name ?? "";
+      const hits = await search(`"${name}" "${company}" LinkedIn`, apiKey, {
+        maxResults: 5,
+        includeRawContent: false,
+        includeDomains: ["linkedin.com"],
+      });
+      const url = pickLinkedinProfile(hits, name, companyNames);
+      if (url) found.set(name, url);
+    }),
+  );
+
+  return {
+    leaders: leaders.map((leader) =>
+      leader.name && found.has(leader.name)
+        ? { ...leader, linkedinSuggestion: found.get(leader.name) ?? null }
+        : leader,
+    ),
+    log: {
+      source: "LinkedIn suggestions (Tavily)",
+      ok: found.size > 0,
+      durationMs: Date.now() - startedAt,
+      note: wanted.length
+        ? `${found.size}/${wanted.length} profile(s) suggested — unverified, check before use`
+        : "No named leaders without a site-linked profile",
+    },
+  };
 };

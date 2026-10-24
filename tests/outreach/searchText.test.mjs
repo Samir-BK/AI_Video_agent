@@ -60,7 +60,9 @@ test("domainGuesses builds ordered .fi/.com candidates", () => {
   ]);
   assert.ok(domainGuesses("Würth Oy").includes("wurth.fi"));
   assert.ok(domainGuesses("Tamtron Group Oyj").includes("tamtron.fi"));
-  assert.ok(domainGuesses("A Very Long Company Name Group Oy").length <= 6);
+  assert.ok(domainGuesses("A Very Long Company Name Group Oy").length <= 8);
+  // Brand domain without the founder's first name: Oy Karl Fazer Ab -> fazer.com.
+  assert.ok(domainGuesses("Oy Karl Fazer Ab").includes("fazer.com"));
 });
 
 test("queryFallbacks proposes accent variants and the longest word", async () => {

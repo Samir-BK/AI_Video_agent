@@ -1,8 +1,10 @@
 # Velho Outreach — role-personalized video emails
 
 An add-on to the Velho Outreach Engine. For one company it writes a separate,
-sourced email for each decision-maker — **CEO, COO and CFO** — and each email
-links to a personal page with the company's 45-second video.
+sourced email for each decision-maker — **CEO, COO and CFO**, plus the heads of
+**IT (CTO/CIO), Sales, HR and Customer service & supply** when the company
+publishes them — and each email links to a personal page with the company's
+45-second video.
 
 The aim is that each executive opens the video because the email speaks to what
 their role cares about, using real public facts about the company:
@@ -15,7 +17,8 @@ Open it at **`/outreach`**. The original dashboard at `/` is unchanged.
 ## 1. What happens when you enter a domain
 
 ```
-domain ──► company website (leadership, investor, news, careers pages)
+domain ──► company website (leadership, investor, news, careers pages;
+       │     sitemap + structured data for browser-rendered sites)
        ├─► legacy pipeline: Discovery → Problem → Solution → Video Script
        ├─► trade register (PRH open data): domain → legal company
        ├─► job ads (Duunitori public search)
@@ -23,7 +26,7 @@ domain ──► company website (leadership, investor, news, careers pages)
        │
        ├─► extraction (1 LLM call): leaders, goals, "why now", financials
        │      └─ every quote checked against the fetched page text
-       ├─► work addresses from the company's own site (+ MX check)
+       ├─► work addresses, LinkedIn links and company accounts from the company's own site (+ MX check)
        ├─► sufficiency: ready / weak / insufficient
        └─► role emails (1 LLM call) ──► /v/<domain>?r=<role>&t=<token>
 ```
@@ -70,10 +73,50 @@ Renamed companies are handled (PRH keeps name history; a rename in the last
 - **CEO** — growth and strategy; ties the bottleneck to a stated goal or a "why now" signal.
 - **COO** — operations, hours, where the bottleneck sits; "free up your team's hours".
 - **CFO** — EUR/month (labelled estimate) and % of operating profit when verified financials exist.
+- **CTO / IT** — systems and data flow; the fix connects to the systems they already run.
+- **Sales** — slower quotes and order confirmations; more time for customers.
+- **HR** — routine work that grows with headcount; never "replace people".
+- **Service & supply** — customer service, purchasing and supply chain; incoming emails and orders handled by hand.
+
+CEO, COO and CFO are always considered (a missing COO/CFO folds into the CEO
+email). The other four get an email **only when a named person is published**
+for the role; they never fold into another email. Each role opens with the
+fact most relevant to it (an IT job ad for the CTO, a customer-service ad for
+the service head), so two leaders at one company read different emails.
 
 Finnish titles are mapped (`toimitusjohtaja` → CEO, `talousjohtaja` → CFO,
-`toimitusketjujohtaja` / `tuotantojohtaja` / "SVP Operations" → COO).
-Deputies are ignored.
+`tuotantojohtaja` / `logistiikkajohtaja` / "SVP Operations" → COO,
+`tietohallintojohtaja` / `IT-johtaja` / CIO → CTO, `myyntijohtaja` /
+`kaupallinen johtaja` → Sales, `henkilöstöjohtaja` → HR, `asiakaspalvelujohtaja`
+/ `hankintajohtaja` / `toimitusketjujohtaja` → Service & supply).
+Specific functions are checked before the generic ones, so "Supply Chain
+Director" is not swallowed by COO's "operations". Deputies are ignored.
+
+### Contact details per person — work information only
+- **Work email**, in order of trust:
+  1. *Published*: the person's own address on the company's pages or on
+     press releases found by web search ("Lisätietoja: … @…"). Addresses
+     hidden from bots (Cloudflare protection, `name(at)example.fi`) count.
+  2. *Company format*: the format the company publishes — other people's
+     addresses or a notice such as `etunimi.sukunimi@lassila-tikanoja.fi` —
+     applied to the name, when that mail domain has MX records. The mail
+     domain may differ from the website (lt.fi → lassila-tikanoja.fi).
+  3. *Guessed*: nothing published anywhere → `firstname.lastname@` on a domain
+     with MX records, shown in amber as "guessed — unverified" (may bounce).
+     Mail servers are never probed.
+  Personal addresses (Gmail etc.) are not looked up.
+- **LinkedIn**, three levels:
+  1. *Verified*: a profile the company's own website links next to the name.
+  2. *Search on LinkedIn* button: opens LinkedIn's people search for
+     "name + company" in a new tab; the operator picks the right person.
+  3. *Unverified suggestion* (only with `TAVILY_API_KEY`): one web search per
+     named leader, LinkedIn results only. Accepted when the result title holds
+     the full name and the title or snippet names the company. Shown in amber
+     as "unverified — check before use". LinkedIn itself is never fetched and
+     only the URL is kept. Costs about one Tavily credit per named leader.
+- **Official company accounts** (Instagram, Facebook, LinkedIn, X, YouTube,
+  TikTok) as linked from the company site, one per platform.
+- Personal social-media accounts are **not** looked up (privacy, platform terms).
 
 | Level | Condition | Emails |
 |---|---|---|
@@ -110,7 +153,7 @@ templates, and labels what fell back.
 | Variable | Purpose | Default |
 |---|---|---|
 | `OPENAI_API_KEY` / `GROQ_API_KEY` | Extraction + emails (existing team key) | templates |
-| `TAVILY_API_KEY` | Extra web search for leadership/news | off |
+| `TAVILY_API_KEY` | Extra web search for leadership/news, and unverified LinkedIn profile suggestions | off |
 | `ASSUMED_HOURLY_COST_EUR` | Hourly cost in the estimate (always shown as an assumption) | `40` |
 | `OUTREACH_SENDER_NAME` | Real Velho person in the signature | `[Sender name], Velho` |
 | `OUTREACH_SENDER_EMAIL` | From address (an outreach subdomain in production) | placeholder |
@@ -131,7 +174,7 @@ templates, and labels what fell back.
 npm ci
 npm run dev                              # then open http://localhost:3000/outreach
 npm run typecheck
-node --test tests/outreach/*.test.mjs    # 45 unit tests, no extra dependencies
+node --test tests/outreach/*.test.mjs    # 66 unit tests, no extra dependencies
 ```
 
 Stored results, views and opt-outs live in memory and in
@@ -153,10 +196,11 @@ lib/outreach/fetchText.ts             full-text page fetcher
 lib/outreach/research/*.ts            website, PRH, entity, job ads, Tavily, extraction, contacts
 lib/outreach/search/*.ts              PRH search client, website resolution, criteria engine, enrichment
 lib/outreach/pure/*.ts                verification, roles, sufficiency, estimate, email pattern, .eml,
-                                      search text/filters/scoring/signals, PRH record parsing
+                                      search text/filters/scoring/signals/ranking, PRH record parsing,
+                                      HTML structured data, social links, sitemaps (htmlData)
 app/api/outreach/**                   stream, send, eml, unsubscribe, views, result
 app/api/outreach/search/**            companies, resolve, criteria (SSE), history
-app/outreach/**                       dashboard + search page (/outreach/search)
+app/outreach/**                       dashboard with search tabs (components/search/*)
 app/v/[domain]/**                     personal video page (fixes the former 404)
 app/unsubscribe/page.tsx              unsubscribe confirmation
 tests/outreach/*.test.mjs             node:test unit tests
@@ -164,34 +208,47 @@ tests/outreach/*.test.mjs             node:test unit tests
 
 ---
 
-## 9. Search (`/outreach/search`)
+## 9. Search (on `/outreach`)
 
-Three tabs, all ending in the existing per-company outreach (no batch runs).
+Search lives on the outreach page itself, in three tabs: **Research a company**
+(default), **Find by criteria** and **History**. Every path ends in the
+per-company outreach on the same page (no batch runs, no page change).
 Company data only — there is no search by person. Data: PRH / YTJ open data,
 CC BY 4.0 (attribution shown on the page).
 
-### By name
-Live suggestions from the trade register (300 ms debounce, stale requests
-cancelled, ↑ ↓ Enter Esc). Shows current and previous names, business ID,
-city, business line, age and status (dissolved / liquidation / bankruptcy).
-When nothing matches it retries the longest word ("lassila tikanoja" →
-Lassila & Tikanoja Oyj) and accent variants ("wurth" → Würth Oy).
-Picking a company resolves its website (below) and hands off to
-`/outreach?domain=…&businessId=…&auto=1`, so the entity match is exact.
-Typing a company name instead of a domain on `/outreach` opens this tab.
+### Research a company — one smart input
+- A **domain** (`tamtron.fi`) runs outreach straight away, as before.
+- A **company name** (`Berner`) shows live suggestions from the trade register
+  (300 ms debounce, stale requests cancelled, ↑ ↓ Enter Esc): current and
+  previous names, business ID, city, business line, age and status
+  (dissolved / liquidation / bankruptcy). When nothing matches it retries the
+  longest word ("lassila tikanoja" → Lassila & Tikanoja Oyj) and accent
+  variants ("wurth" → Würth Oy).
+- Picking a company shows its card: register details and the website check
+  (below), with a "Research & write" button that runs outreach with the exact
+  business ID.
+- Deep links still work: `/outreach?domain=…&businessId=…&auto=1` starts a run,
+  `/outreach?view=<domain>` reopens a stored one.
 
 ### Website resolution — never an unverified guess
 1. The website registered in PRH, if it responds.
-2. Otherwise candidates from the legal name (`berner.fi`, `lassila-tikanoja.fi`, …),
-   each accepted only when DNS resolves **and** the homepage contains the legal
-   name (current or previous) or the business ID. The matching excerpt is shown.
+2. Otherwise candidates from the legal name (`berner.fi`, `lassila-tikanoja.fi`,
+   and single words such as `fazer.com` for "Oy Karl Fazer Ab"), each accepted
+   only when DNS resolves **and** the homepage (including its structured data)
+   contains the legal name (current or previous), a multi-word name without the
+   legal form ("Karl Fazer"), or the business ID. The matching excerpt is shown.
+   A guess that redirects is recorded as the site it lands on
+   (`karlfazer.fi` → `fazer.com`).
 3. Otherwise "website not found" and the operator can type it.
 This is deliberately strict: a site that says "Kesla" but never "Kesla Oyj" is
 not accepted automatically.
 
-### By criteria
+### Find by criteria
 Industry groups (or raw TOL codes), region (largest towns first) plus extra
-towns, minimum age (default 10 years).
+towns, minimum age (default 10 years). "Research & write" on a row switches to
+the research tab, checks the website and starts outreach as soon as it is
+verified (or asks for the website if none can be verified). The criteria
+results stay in place when you switch tabs.
 
 | Observed PRH behaviour (probed 24 Oct 2026) | How the code handles it |
 |---|---|
@@ -224,8 +281,9 @@ CSV export includes all signals and the score explanation.
 ### History
 Companies already researched on this server, searchable by partial,
 accent-insensitive company name, domain or contact, filterable by email status
-and minimum video views, sortable by date or views. "Open" reloads the stored
-result in `/outreach` without new research (`/api/outreach/result`).
+and minimum video views, sortable by date or views. "Open" shows the stored
+result on the research tab without new research (`/api/outreach/result`).
+The list refreshes after each new run.
 The default store is per machine — see `docs/OUTREACH_INTEGRATION.md` §5.
 
 ---
@@ -237,7 +295,24 @@ The default store is per machine — see `docs/OUTREACH_INTEGRATION.md` §5.
   news and financials should lift more companies to `ready`.
 - Some sites block automated reading (e.g. HTTP 403). The tool logs it and does
   not try to get around it; register and job-ad data still work.
-- Job ads come from one board (Duunitori) and are matched by company name.
+- Job ads come from one board (Duunitori) and are matched by company name, or
+  by the brand when the website's domain is one of the legal name's words
+  (fazer.com → ads posted as "Fazer"). A brand query can also match an
+  unrelated company that starts with the same word.
+- **Without an LLM key**, keyword rules pick goal, financial and change
+  sentences from the fetched pages (`pure/ruleFacts.ts`); each quote is the
+  sentence itself, so it verifies. These sentences are not translated, so an
+  English email quotes a Finnish sentence verbatim. A model key
+  (`GROQ_API_KEY` or `OPENAI_API_KEY`) gives better facts and wording.
+- On pages outside the company's site (web search), a leader counts only when
+  the company name appears within 200 characters of the title.
+- Sites rendered in the browser (e.g. fazer.com) are read through their meta
+  tags, JSON-LD and framework data plus the sitemap; text that only appears
+  after JavaScript runs is still missed. Groups whose management sits on a
+  separate corporate domain (fazergroup.com) get no named leaders.
+- Name suggestions rank the group head office, Velho-relevant industries, older
+  companies and those with a registered website higher; one-person service
+  firms (law, accounting, arts) lower.
 - The video itself (legacy player) is English; the page labels and emails
   support Finnish.
 - The default store is a temp-dir JSON file: fine locally, **not shared between

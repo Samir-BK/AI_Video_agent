@@ -67,8 +67,27 @@ test("mapTitleToRole maps English, Finnish and operations titles", () => {
   assert.equal(mapTitleToRole("talousjohtaja"), "CFO");
   assert.equal(mapTitleToRole("Chief Financial Officer"), "CFO");
   assert.equal(mapTitleToRole("SVP Operations"), "COO");
-  assert.equal(mapTitleToRole("Toimitusketjujohtaja"), "COO");
+  assert.equal(mapTitleToRole("Logistiikkajohtaja"), "COO");
   assert.equal(mapTitleToRole("Chief Operating Officer"), "COO");
+});
+
+test("mapTitleToRole maps IT, sales, HR and service titles", () => {
+  assert.equal(mapTitleToRole("CIO"), "CTO");
+  assert.equal(mapTitleToRole("Tietohallintojohtaja"), "CTO");
+  assert.equal(mapTitleToRole("IT-johtaja"), "CTO");
+  assert.equal(mapTitleToRole("Chief Digital Officer"), "CTO");
+  assert.equal(mapTitleToRole("Myyntijohtaja"), "SALES");
+  assert.equal(mapTitleToRole("Kaupallinen johtaja"), "SALES");
+  assert.equal(mapTitleToRole("Chief Commercial Officer"), "SALES");
+  assert.equal(mapTitleToRole("Henkilöstöjohtaja"), "HR");
+  assert.equal(mapTitleToRole("HR Director"), "HR");
+  assert.equal(mapTitleToRole("Asiakaspalvelujohtaja"), "SERVICE");
+  assert.equal(mapTitleToRole("Hankintajohtaja"), "SERVICE");
+  assert.equal(mapTitleToRole("Toimitusketjujohtaja"), "SERVICE");
+  assert.equal(mapTitleToRole("Supply Chain Director"), "SERVICE");
+  // Specific functions win over the generic "operations" and "CEO".
+  assert.equal(mapTitleToRole("CFO, deputy to the CEO"), "CFO");
+  assert.equal(mapTitleToRole("Director, Sales Operations"), "SALES");
 });
 
 test("mapTitleToRole ignores deputies and unrelated titles", () => {
