@@ -202,7 +202,13 @@ const templateEmail = (
       `Teimme 45 sekunnin videon siitä, miltä ${solution.architectureName} voisi näyttää teillä.`,
     ];
     return {
-      subject: truncateSubject(`${companyName}: ${hours} h/kk takaisin tiimille`),
+      subject: truncateSubject(
+        {
+          CEO: `${companyName}: 45 sekunnin idea kasvutavoitteeseen`,
+          COO: `${companyName}: ~${hours} h/kk takaisin tiimille`,
+          CFO: `${companyName}: manuaalisen työn kuukausikustannus`,
+        }[request.role],
+      ),
       body,
       callToAction: "Katso 45 sekunnin video:",
       facts: lead ? [lead] : [],

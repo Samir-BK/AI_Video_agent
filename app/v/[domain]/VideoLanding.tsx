@@ -9,10 +9,11 @@ import type {
   SolutionOutput,
   VideoScriptOutput,
 } from "@/types/pipeline";
-import type { CostEstimate, ExecRole, SourcedFact } from "@/types/outreach";
+import type { CostEstimate, ExecRole, OutreachLanguage, SourcedFact } from "@/types/outreach";
 
 interface VideoLandingProps {
   role: ExecRole;
+  language: OutreachLanguage;
   companyName: string;
   discovery: DiscoveryOutput;
   problem: ProblemOutput;
@@ -25,8 +26,50 @@ interface VideoLandingProps {
   isPreview: boolean;
 }
 
-const eur = (amount: number): string =>
-  new Intl.NumberFormat("en-IE", {
+/** Page labels. The video itself (legacy player) is English-only for now. */
+const COPY = {
+  en: {
+    preview: "Preview with sample content — no research has been run for this company yet.",
+    madeFor: "Made for",
+    fallbackHeadline: (company: string) => `A 45-second idea for ${company}`,
+    statedGoal: "Your stated goal:",
+    estimatedCost: "Estimated cost",
+    perMonth: "/month",
+    hoursPerMonth: "h/month",
+    shareOfProfit: "Share of operating profit",
+    shareNote: "Yearly estimate vs. last reported operating profit",
+    teamHours: "Team hours to free up",
+    manualHours: "Hours tied up in manual work",
+    where: "Where",
+    notHeadcount: "The goal is to free up your team's hours, not to add headcount.",
+    book: "Book 15 minutes",
+    sources: "Sources",
+    footer: (company: string) =>
+      `Velho · Built from public information about ${company}. Figures marked “assumption” are estimates.`,
+  },
+  fi: {
+    preview: "Esikatselu esimerkkisisällöllä — yrityksestä ei ole vielä tehty selvitystä.",
+    madeFor: "Tehty yritykselle",
+    fallbackHeadline: (company: string) => `45 sekunnin idea: ${company}`,
+    statedGoal: "Julkaistu tavoitteenne:",
+    estimatedCost: "Arvioitu kustannus",
+    perMonth: "/kk",
+    hoursPerMonth: "h/kk",
+    shareOfProfit: "Osuus liikevoitosta",
+    shareNote: "Vuosiarvio suhteessa viimeisimpään liikevoittoon",
+    teamHours: "Vapautettavat tiimin tunnit",
+    manualHours: "Manuaaliseen työhön kuluvat tunnit",
+    where: "Missä",
+    notHeadcount: "Tavoitteena on vapauttaa tiiminne tunteja, ei lisätä henkilöstöä.",
+    book: "Varaa 15 minuuttia",
+    sources: "Lähteet",
+    footer: (company: string) =>
+      `Velho · Koottu julkisista tiedoista (${company}). Merkinnällä ”oletus” olevat luvut ovat arvioita.`,
+  },
+} as const;
+
+const eur = (amount: number, language: OutreachLanguage): string =>
+  new Intl.NumberFormat(language === "fi" ? "fi-FI" : "en-IE", {
     style: "currency",
     currency: "EUR",
     maximumFractionDigits: 0,
@@ -42,6 +85,7 @@ const hostOf = (url: string): string => {
 
 export default function VideoLanding({
   role,
+  language,
   companyName,
   discovery,
   problem,
@@ -52,52 +96,58 @@ export default function VideoLanding({
   bookingUrl,
   isPreview,
 }: VideoLandingProps) {
+  const t = COPY[language];
   const goal = facts.find((fact) => fact.kind === "strategy_goal");
 
   const numbers: { label: string; value: string; note: string }[] =
     role === "CFO"
       ? [
-          { label: "Estimated cost", value: `${eur(estimate.eurPerMonth)}/month`, note: estimate.formula },
+          {
+            label: t.estimatedCost,
+            value: `${eur(estimate.eurPerMonth, language)}${t.perMonth}`,
+            note: estimate.formula,
+          },
           ...(estimate.shareOfOperatingProfitPct !== null
             ? [
                 {
-                  label: "Share of operating profit",
+                  label: t.shareOfProfit,
                   value: `≈${estimate.shareOfOperatingProfitPct}%`,
-                  note: "Yearly estimate vs. last reported operating profit",
+                  note: t.shareNote,
                 },
               ]
             : []),
         ]
       : [
           {
-            label: role === "COO" ? "Team hours to free up" : "Hours tied up in manual work",
-            value: `≈${estimate.hoursPerMonth} h/month`,
+            label: role === "COO" ? t.teamHours : t.manualHours,
+            value: `≈${estimate.hoursPerMonth} ${t.hoursPerMonth}`,
             note: estimate.formula,
           },
-          { label: "Where", value: problem.title, note: problem.department },
+          { label: t.where, value: problem.title, note: problem.department },
         ];
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-6 px-4 py-8 sm:py-12">
+    <main
+      lang={language}
+      className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-6 px-4 py-8 sm:py-12"
+    >
       {isPreview && (
         <div className="flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           <Info className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>
-            Preview with sample content — no research has been run for this company yet.
-          </span>
+          <span>{t.preview}</span>
         </div>
       )}
 
       <header className="space-y-2">
         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-velho-muted">
-          Made for {companyName}
+          {t.madeFor} {companyName}
         </p>
         <h1 className="text-2xl font-semibold leading-tight text-zinc-50 sm:text-3xl">
-          {videoScript.headline || `A 45-second idea for ${companyName}`}
+          {videoScript.headline || t.fallbackHeadline(companyName)}
         </h1>
         {goal && (
           <p className="text-sm text-zinc-300">
-            Your stated goal: <span className="text-zinc-100">{goal.text}</span>
+            {t.statedGoal} <span className="text-zinc-100">{goal.text}</span>
           </p>
         )}
       </header>
@@ -125,8 +175,7 @@ export default function VideoLanding({
       </section>
 
       <p className="text-sm leading-relaxed text-zinc-300">
-        {solution.summary} The goal is to free up your team&apos;s hours, not to add
-        headcount.
+        {solution.summary} {t.notHeadcount}
       </p>
 
       <a
@@ -134,13 +183,13 @@ export default function VideoLanding({
         className="flex items-center justify-center gap-2 rounded-xl bg-sky-500 px-5 py-4 text-base font-semibold text-white transition hover:bg-sky-400"
       >
         <CalendarCheck className="h-5 w-5" />
-        Book 15 minutes
+        {t.book}
       </a>
 
       {facts.length > 0 && (
         <details className="group rounded-xl border border-velho-line bg-velho-ink px-4 py-3 text-sm">
           <summary className="flex cursor-pointer list-none items-center justify-between text-zinc-200">
-            Sources ({facts.length})
+            {t.sources} ({facts.length})
             <ChevronDown className="h-4 w-4 transition group-open:rotate-180" />
           </summary>
           <ul className="mt-3 space-y-3">
@@ -162,10 +211,7 @@ export default function VideoLanding({
         </details>
       )}
 
-      <footer className="pt-2 text-xs text-velho-muted">
-        Velho · Built from public information about {companyName}. Figures marked
-        &ldquo;assumption&rdquo; are estimates.
-      </footer>
+      <footer className="pt-2 text-xs text-velho-muted">{t.footer(companyName)}</footer>
     </main>
   );
 }

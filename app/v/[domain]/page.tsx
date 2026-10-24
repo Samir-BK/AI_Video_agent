@@ -59,6 +59,7 @@ export default function VideoPage({ params, searchParams }: PageProps) {
     return (
       <VideoLanding
         role={role}
+        language={searchParams.lang === "fi" ? "fi" : "en"}
         companyName={companyName}
         discovery={mock.discovery}
         problem={mock.problem}
@@ -79,6 +80,7 @@ export default function VideoPage({ params, searchParams }: PageProps) {
   return (
     <VideoLanding
       role={role}
+      language={result.language}
       companyName={companyName}
       discovery={result.pipeline.discovery}
       problem={result.pipeline.problem}
