@@ -1,17 +1,27 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { Building2, Loader2, Search } from "lucide-react";
+import { Building2, Globe, Loader2, Search } from "lucide-react";
 
 import type { CompanySearchResponse, CompanySuggestion } from "@/types/outreach";
 
-interface NameSearchProps {
-  initialQuery: string;
-  onSelect: (company: CompanySuggestion) => void;
+interface CompanyInputProps {
+  value: string;
+  onValueChange: (value: string) => void;
+  /** The text is a domain (e.g. "berner.fi"): run outreach directly. */
+  onSubmitDomain: (domain: string) => void;
+  /** A company was picked from the trade-register suggestions. */
+  onSelectCompany: (company: CompanySuggestion) => void;
+  disabled?: boolean;
 }
 
 const DEBOUNCE_MS = 300;
 const MIN_CHARS = 2;
+
+const DOMAIN_LIKE =
+  /^(?:https?:\/\/)?(?:www\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?:\/.*)?$/i;
+
+export const looksLikeDomain = (value: string): boolean => DOMAIN_LIKE.test(value.trim());
 
 const STATUS_LABEL: Record<CompanySuggestion["status"], string | null> = {
   active: null,
@@ -26,37 +36,43 @@ const sinceLabel = (company: CompanySuggestion): string | null => {
 };
 
 /**
- * Accessible combobox: debounced live suggestions from the trade register,
- * stale requests cancelled, full keyboard support (↑ ↓ Enter Esc).
+ * One smart input: a domain runs outreach directly; anything else shows live
+ * company suggestions from the trade register (debounced, stale requests
+ * cancelled, ↑ ↓ Enter Esc).
  */
-export default function NameSearch({ initialQuery, onSelect }: NameSearchProps) {
-  const [query, setQuery] = useState(initialQuery);
+export default function CompanyInput({
+  value,
+  onValueChange,
+  onSubmitDomain,
+  onSelectCompany,
+  disabled = false,
+}: CompanyInputProps) {
   const [suggestions, setSuggestions] = useState<CompanySuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const listId = useId();
-  const abortRef = useRef<AbortController | null>(null);
   /** Set when the text changed because a suggestion was picked. */
   const pickedRef = useRef(false);
 
+  const isDomain = looksLikeDomain(value);
+
   useEffect(() => {
-    const trimmed = query.trim();
-    abortRef.current?.abort();
+    const trimmed = value.trim();
     if (pickedRef.current) {
       pickedRef.current = false;
       return;
     }
-    if (trimmed.length < MIN_CHARS) {
+    if (isDomain || trimmed.length < MIN_CHARS) {
       setSuggestions([]);
       setNote(null);
       setLoading(false);
+      setOpen(false);
       return;
     }
 
     const controller = new AbortController();
-    abortRef.current = controller;
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
@@ -74,7 +90,7 @@ export default function NameSearch({ initialQuery, onSelect }: NameSearchProps) 
         setOpen(true);
       } catch (error) {
         if (!(error instanceof DOMException && error.name === "AbortError")) {
-          setNote("Trade register unreachable — try again in a moment.");
+          setNote("Trade register unreachable — enter the company's domain instead.");
           setSuggestions([]);
         }
       } finally {
@@ -86,42 +102,48 @@ export default function NameSearch({ initialQuery, onSelect }: NameSearchProps) 
       clearTimeout(timer);
       controller.abort();
     };
-  }, [query]);
+  }, [value, isDomain]);
 
   const choose = (company: CompanySuggestion | undefined) => {
     if (!company) return;
     setOpen(false);
+    setNote(null);
     pickedRef.current = true;
-    setQuery(company.name);
-    onSelect(company);
+    onValueChange(company.name);
+    onSelectCompany(company);
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "ArrowDown") {
+    if (event.key === "ArrowDown" && suggestions.length > 0) {
       event.preventDefault();
       setOpen(true);
       setActive((index) => Math.min(index + 1, suggestions.length - 1));
-    } else if (event.key === "ArrowUp") {
+    } else if (event.key === "ArrowUp" && suggestions.length > 0) {
       event.preventDefault();
       setActive((index) => Math.max(index - 1, 0));
     } else if (event.key === "Enter") {
       event.preventDefault();
-      if (open) choose(suggestions[active]);
+      if (isDomain) onSubmitDomain(value.trim());
+      else if (open) choose(suggestions[active] ?? suggestions[0]);
     } else if (event.key === "Escape") {
       setOpen(false);
     }
   };
 
   const optionId = (index: number) => `${listId}-option-${index}`;
-  const showList = open && suggestions.length > 0;
+  const showList = open && suggestions.length > 0 && !isDomain;
 
   return (
-    <div className="relative">
+    <div className="relative flex-1">
       <label htmlFor={`${listId}-input`} className="sr-only">
-        Company name
+        Company domain or name
       </label>
       <div className="flex items-center gap-2 rounded-xl border border-velho-line bg-velho-ink px-4 py-3 focus-within:border-sky-500">
-        <Search className="h-4 w-4 shrink-0 text-velho-muted" aria-hidden />
+        {isDomain ? (
+          <Globe className="h-4 w-4 shrink-0 text-sky-300" aria-hidden />
+        ) : (
+          <Search className="h-4 w-4 shrink-0 text-velho-muted" aria-hidden />
+        )}
         <input
           id={`${listId}-input`}
           role="combobox"
@@ -129,17 +151,19 @@ export default function NameSearch({ initialQuery, onSelect }: NameSearchProps) 
           aria-controls={listId}
           aria-autocomplete="list"
           aria-activedescendant={showList && active >= 0 ? optionId(active) : undefined}
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          value={value}
+          disabled={disabled}
+          onChange={(event) => onValueChange(event.target.value)}
           onKeyDown={onKeyDown}
-          onFocus={() => suggestions.length > 0 && setOpen(true)}
+          onFocus={() => suggestions.length > 0 && !isDomain && setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 150)}
-          placeholder="Company name, e.g. Berner"
+          placeholder="Company domain (tamtron.fi) or name (Berner)"
           autoComplete="off"
-          autoFocus
-          className="w-full bg-transparent text-sm text-zinc-100 outline-none placeholder:text-velho-muted"
+          className="w-full bg-transparent text-sm text-zinc-100 outline-none placeholder:text-velho-muted disabled:opacity-60"
         />
-        {loading && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-velho-muted" aria-label="Searching" />}
+        {loading && (
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-velho-muted" aria-label="Searching" />
+        )}
       </div>
 
       {showList && (
@@ -191,7 +215,7 @@ export default function NameSearch({ initialQuery, onSelect }: NameSearchProps) 
         </ul>
       )}
 
-      {note && !loading && (
+      {note && !loading && !isDomain && (
         <p className="mt-2 text-xs text-amber-200/90" role="status">
           {note}
         </p>

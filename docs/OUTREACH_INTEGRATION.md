@@ -19,9 +19,6 @@ here for the leader to decide on.
 +          <a href="/outreach" className="text-sky-300 hover:text-sky-200">
 +            Role-personalized emails →
 +          </a>
-+          <a href="/outreach/search" className="text-sky-300 hover:text-sky-200">
-+            Find companies →
-+          </a>
          </div>
        </footer>
 ```
@@ -86,7 +83,7 @@ export const createKvStore = (url: string, token: string): OutreachStore => { /*
 Opt-outs must live in shared storage before any real sending.
 
 ### Search caches on serverless
-The search page keeps PRH responses (10–30 min), website resolutions and
+The search tabs keep PRH responses (10–30 min), website resolutions and
 enrichment results in process memory, and its rate limiter is per process.
 On serverless each instance has its own cache and limiter, so the register
 may see more parallel requests than the ~5/s target. If the search is used

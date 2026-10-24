@@ -1,16 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowRight, CheckCircle2, ExternalLink, Globe, Loader2, TriangleAlert } from "lucide-react";
 
-import type {
-  CompanySummary,
-  DomainResolution,
-  OutreachLanguage,
-} from "@/types/outreach";
+import type { CompanySummary, DomainResolution } from "@/types/outreach";
 
 interface SelectedCompanyProps {
   company: CompanySummary;
+  /** Run outreach on this page for the resolved (or typed) website. */
+  onResearch: (domain: string, businessId: string) => void;
+  /** Start as soon as a website is verified (used when picked from a list). */
+  autoRun?: boolean;
+  /** Outreach is already running: disable the button. */
+  running?: boolean;
 }
 
 const DOMAIN_PATTERN = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i;
@@ -33,15 +35,19 @@ const OUTCOME_LABEL: Record<DomainResolution["checks"][number]["outcome"], strin
 
 /**
  * The picked company: register details, website resolution (registered or
- * verified — never a raw guess), and the hand-off to the outreach flow with
- * the exact business ID.
+ * verified — never a raw guess), and a button that runs outreach on this page
+ * with the exact business ID.
  */
-export default function SelectedCompany({ company }: SelectedCompanyProps) {
+export default function SelectedCompany({
+  company,
+  onResearch,
+  autoRun = false,
+  running = false,
+}: SelectedCompanyProps) {
   const [resolution, setResolution] = useState<DomainResolution | null>(null);
   const [resolving, setResolving] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [manualDomain, setManualDomain] = useState("");
-  const [language, setLanguage] = useState<OutreachLanguage>("en");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -73,17 +79,17 @@ export default function SelectedCompany({ company }: SelectedCompanyProps) {
   const manual = cleanDomain(manualDomain);
   const manualValid = DOMAIN_PATTERN.test(manual);
   const domain = resolution?.domain ?? (manualValid ? manual : null);
-
-  const outreachHref = domain
-    ? `/outreach?${new URLSearchParams({
-        domain,
-        businessId: company.businessId,
-        lang: language,
-        auto: "1",
-      }).toString()}`
-    : null;
-
   const inactive = company.status !== "active";
+
+  // Picked from a list: start once, as soon as a website is verified.
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (!autoRun || autoStarted.current || inactive || running) return;
+    if (resolution?.domain) {
+      autoStarted.current = true;
+      onResearch(resolution.domain, company.businessId);
+    }
+  }, [autoRun, inactive, running, resolution, company.businessId, onResearch]);
 
   return (
     <section className="space-y-4 rounded-2xl border border-velho-line bg-velho-panel p-5">
@@ -182,22 +188,16 @@ export default function SelectedCompany({ company }: SelectedCompanyProps) {
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <select
-          value={language}
-          onChange={(event) => setLanguage(event.target.value as OutreachLanguage)}
-          aria-label="Email language"
-          className="rounded-xl border border-velho-line bg-velho-ink px-3 py-3 text-sm text-zinc-100"
-        >
-          <option value="en">English</option>
-          <option value="fi">Suomi</option>
-        </select>
-        {outreachHref && !inactive ? (
-          <a
-            href={outreachHref}
-            className="inline-flex items-center gap-2 rounded-xl bg-sky-500 px-5 py-3 text-sm font-semibold text-white hover:bg-sky-400"
+        {domain && !inactive ? (
+          <button
+            type="button"
+            disabled={running}
+            onClick={() => onResearch(domain, company.businessId)}
+            className="inline-flex items-center gap-2 rounded-xl bg-sky-500 px-5 py-3 text-sm font-semibold text-white hover:bg-sky-400 disabled:opacity-50"
           >
-            <ArrowRight className="h-4 w-4" aria-hidden /> Research &amp; write
-          </a>
+            <ArrowRight className="h-4 w-4" aria-hidden />
+            {running ? "Researching…" : `Research & write for ${domain}`}
+          </button>
         ) : (
           <span className="text-xs text-velho-muted">
             {inactive

@@ -155,7 +155,7 @@ lib/outreach/pure/*.ts                verification, roles, sufficiency, estimate
                                       search text/filters/scoring/signals, PRH record parsing
 app/api/outreach/**                   stream, send, eml, unsubscribe, views, result
 app/api/outreach/search/**            companies, resolve, criteria (SSE), history
-app/outreach/**                       dashboard + search page (/outreach/search)
+app/outreach/**                       dashboard with search tabs (components/search/*)
 app/v/[domain]/**                     personal video page (fixes the former 404)
 app/unsubscribe/page.tsx              unsubscribe confirmation
 tests/outreach/*.test.mjs             node:test unit tests
@@ -163,21 +163,27 @@ tests/outreach/*.test.mjs             node:test unit tests
 
 ---
 
-## 9. Search (`/outreach/search`)
+## 9. Search (on `/outreach`)
 
-Three tabs, all ending in the existing per-company outreach (no batch runs).
+Search lives on the outreach page itself, in three tabs: **Research a company**
+(default), **Find by criteria** and **History**. Every path ends in the
+per-company outreach on the same page (no batch runs, no page change).
 Company data only — there is no search by person. Data: PRH / YTJ open data,
 CC BY 4.0 (attribution shown on the page).
 
-### By name
-Live suggestions from the trade register (300 ms debounce, stale requests
-cancelled, ↑ ↓ Enter Esc). Shows current and previous names, business ID,
-city, business line, age and status (dissolved / liquidation / bankruptcy).
-When nothing matches it retries the longest word ("lassila tikanoja" →
-Lassila & Tikanoja Oyj) and accent variants ("wurth" → Würth Oy).
-Picking a company resolves its website (below) and hands off to
-`/outreach?domain=…&businessId=…&auto=1`, so the entity match is exact.
-Typing a company name instead of a domain on `/outreach` opens this tab.
+### Research a company — one smart input
+- A **domain** (`tamtron.fi`) runs outreach straight away, as before.
+- A **company name** (`Berner`) shows live suggestions from the trade register
+  (300 ms debounce, stale requests cancelled, ↑ ↓ Enter Esc): current and
+  previous names, business ID, city, business line, age and status
+  (dissolved / liquidation / bankruptcy). When nothing matches it retries the
+  longest word ("lassila tikanoja" → Lassila & Tikanoja Oyj) and accent
+  variants ("wurth" → Würth Oy).
+- Picking a company shows its card: register details and the website check
+  (below), with a "Research & write" button that runs outreach with the exact
+  business ID.
+- Deep links still work: `/outreach?domain=…&businessId=…&auto=1` starts a run,
+  `/outreach?view=<domain>` reopens a stored one.
 
 ### Website resolution — never an unverified guess
 1. The website registered in PRH, if it responds.
@@ -188,9 +194,12 @@ Typing a company name instead of a domain on `/outreach` opens this tab.
 This is deliberately strict: a site that says "Kesla" but never "Kesla Oyj" is
 not accepted automatically.
 
-### By criteria
+### Find by criteria
 Industry groups (or raw TOL codes), region (largest towns first) plus extra
-towns, minimum age (default 10 years).
+towns, minimum age (default 10 years). "Research & write" on a row switches to
+the research tab, checks the website and starts outreach as soon as it is
+verified (or asks for the website if none can be verified). The criteria
+results stay in place when you switch tabs.
 
 | Observed PRH behaviour (probed 24 Oct 2026) | How the code handles it |
 |---|---|
@@ -223,8 +232,9 @@ CSV export includes all signals and the score explanation.
 ### History
 Companies already researched on this server, searchable by partial,
 accent-insensitive company name, domain or contact, filterable by email status
-and minimum video views, sortable by date or views. "Open" reloads the stored
-result in `/outreach` without new research (`/api/outreach/result`).
+and minimum video views, sortable by date or views. "Open" shows the stored
+result on the research tab without new research (`/api/outreach/result`).
+The list refreshes after each new run.
 The default store is per machine — see `docs/OUTREACH_INTEGRATION.md` §5.
 
 ---
