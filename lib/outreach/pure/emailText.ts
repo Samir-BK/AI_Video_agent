@@ -33,6 +33,34 @@ export const mailtoUrl = (email: RoleEmail): string => {
   return `mailto:${encodeURIComponent(to).replace(/%40/g, "@")}?${query}`;
 };
 
+/** Gmail's web compose screen. Works in the browser when no mail app is installed. */
+export const gmailComposeUrl = (email: RoleEmail): string => {
+  const params = new URLSearchParams({
+    view: "cm",
+    fs: "1",
+    to: email.recipient.email ?? "",
+    su: email.subject,
+    body: emailBodyText(email),
+  });
+  return `https://mail.google.com/mail/?${params.toString()}`;
+};
+
+const LOCAL_ORIGIN = /https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/gi;
+
+/** Replace localhost links with the site the operator is actually viewing. */
+export const rewriteLocalOrigins = (email: RoleEmail, origin: string): RoleEmail => {
+  const publicOrigin = origin.replace(/\/$/, "");
+  const fix = (value: string): string => value.replace(LOCAL_ORIGIN, publicOrigin);
+  return {
+    ...email,
+    videoUrl: fix(email.videoUrl),
+    unsubscribeUrl: fix(email.unsubscribeUrl),
+    callToAction: fix(email.callToAction),
+    body: email.body.map(fix),
+    footer: email.footer.map(fix),
+  };
+};
+
 const toBase64 = (value: string): string => {
   const bytes = new TextEncoder().encode(value);
   let binary = "";

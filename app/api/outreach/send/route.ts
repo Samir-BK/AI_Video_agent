@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import { readSenderConfig, resolveSender } from "@/lib/outreach/senders";
 import { getOutreachStore, tokenKey } from "@/lib/outreach/store";
-import type { RoleEmailStatus } from "@/types/outreach";
+import type { RoleEmail, RoleEmailStatus } from "@/types/outreach";
 
 /**
  * GET  /api/outreach/send
@@ -28,6 +28,25 @@ const json = (status: number, payload: Record<string, unknown>): Response =>
     status,
     headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
   });
+
+/**
+ * The dashboard already has the email. On Vercel the in-memory store is not
+ * shared between requests, so a dry run can send that copy when the token
+ * is missing. Real recipients still require the stored record.
+ */
+const clientEmail = (value: unknown, token: string): RoleEmail | null => {
+  if (!value || typeof value !== "object") return null;
+  const email = value as RoleEmail;
+  if (email.token !== token) return null;
+  if (typeof email.subject !== "string" || email.subject.length > 300) return null;
+  if (typeof email.greeting !== "string" || typeof email.callToAction !== "string") return null;
+  if (typeof email.videoUrl !== "string" || typeof email.unsubscribeUrl !== "string") return null;
+  if (!Array.isArray(email.body) || email.body.some((line) => typeof line !== "string")) return null;
+  if (!Array.isArray(email.footer) || email.footer.some((line) => typeof line !== "string")) return null;
+  if (email.body.join("").length + email.footer.join("").length > 12_000) return null;
+  if (!email.recipient || typeof email.recipient !== "object") return null;
+  return email;
+};
 
 const secretMatches = (expected: string, given: string): boolean => {
   const a = Buffer.from(expected);
@@ -56,17 +75,19 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   let token = "";
+  let posted: unknown;
   try {
-    const body = (await request.json()) as { token?: unknown };
+    const body = (await request.json()) as { token?: unknown; email?: unknown };
     token = typeof body.token === "string" ? body.token : "";
+    posted = body.email;
   } catch {
     return json(400, { error: "Expected JSON { token }" });
   }
 
   const store = getOutreachStore();
-  const found = store.getEmailByToken(token);
-  if (!found) return json(404, { error: "Unknown email token." });
-  const { email } = found;
+  const found = token ? store.getEmailByToken(token) : null;
+  const email = found?.email ?? (config.dryRun ? clientEmail(posted, token) : null);
+  if (!email) return json(404, { error: "Unknown email token." });
 
   const address = email.recipient.email;
   if ((address && store.isDoNotContact(address)) || store.isDoNotContact(tokenKey(token))) {
@@ -82,7 +103,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!sender) {
     return json(400, {
       error:
-        "Gmail is not connected. Add GMAIL_APP_PASSWORD to .env.local (a Google app password for your sender account) and restart the dev server.",
+        "Gmail is not connected. Set GMAIL_APP_PASSWORD, OUTREACH_SENDER_EMAIL, and OUTREACH_TEST_EMAIL (in .env.local locally, or in the Vercel project settings) and redeploy.",
     });
   }
 

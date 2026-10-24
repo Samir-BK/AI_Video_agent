@@ -1,9 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Check, Copy, Download, Eye, ExternalLink, Mail, Send } from "lucide-react";
 
-import { emailToPlainText, mailtoUrl } from "@/lib/outreach/pure/emailText";
+import {
+  buildEml,
+  emailToPlainText,
+  emlFileName,
+  gmailComposeUrl,
+  rewriteLocalOrigins,
+} from "@/lib/outreach/pure/emailText";
 import type { RoleEmail, RoleEmailStatus } from "@/types/outreach";
 
 interface EmailCardProps {
@@ -38,15 +44,36 @@ export default function EmailCard({
   const [sending, setSending] = useState(false);
   const [sendNote, setSendNote] = useState<string | null>(null);
   const optedOut = status === "opted_out";
+  const shown = useMemo(
+    () =>
+      typeof window === "undefined"
+        ? email
+        : rewriteLocalOrigins(email, window.location.origin),
+    [email],
+  );
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(emailToPlainText(email));
+      await navigator.clipboard.writeText(emailToPlainText(shown));
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      setCopied(false);
+      setSendNote("Could not copy. Select the email text instead.");
     }
+  };
+
+  const download = () => {
+    const eml = buildEml(shown, {
+      fromName: "Velho",
+      fromAddress: "outreach@velho.io",
+      date: new Date(),
+    });
+    const url = URL.createObjectURL(new Blob([eml], { type: "message/rfc822" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = emlFileName(shown.recipient.name || "outreach", shown);
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   const send = async () => {
@@ -56,14 +83,14 @@ export default function EmailCard({
       const response = await fetch("/api/outreach/send", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-admin-secret": adminSecret },
-        body: JSON.stringify({ token: email.token }),
+        body: JSON.stringify({ token: shown.token, email: shown }),
       });
       const payload = (await response.json().catch(() => ({}))) as {
         status?: RoleEmailStatus;
         deliveredTo?: string;
         error?: string;
       };
-      if (payload.status) onStatus(email.token, payload.status);
+      if (payload.status) onStatus(shown.token, payload.status);
       setSendNote(
         response.ok
           ? `Delivered to ${payload.deliveredTo ?? "the test inbox"}`
@@ -85,10 +112,10 @@ export default function EmailCard({
         <div className="flex items-center gap-2">
           <Mail className="h-4 w-4 text-sky-300" />
           <span className="text-sm font-semibold text-zinc-100">
-            {email.role}
-            {email.recipient.name ? ` · ${email.recipient.name}` : " · name not found"}
+            {shown.role}
+            {shown.recipient.name ? ` · ${shown.recipient.name}` : " · name not found"}
           </span>
-          <span className="text-xs text-velho-muted">{email.recipient.title}</span>
+          <span className="text-xs text-velho-muted">{shown.recipient.title}</span>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className="inline-flex items-center gap-1 rounded-full bg-zinc-700/40 px-2 py-0.5 text-zinc-300">
@@ -96,12 +123,12 @@ export default function EmailCard({
           </span>
           <span
             className={`rounded-full px-2 py-0.5 ${
-              email.writtenBy === "live"
+              shown.writtenBy === "live"
                 ? "bg-emerald-500/15 text-emerald-300"
                 : "bg-amber-500/15 text-amber-300"
             }`}
           >
-            {email.writtenBy === "live" ? "Written by model" : "Template fallback"}
+            {shown.writtenBy === "live" ? "Written by model" : "Template fallback"}
           </span>
           <span
             className={`rounded-full px-2 py-0.5 ${
@@ -114,39 +141,39 @@ export default function EmailCard({
       </div>
 
       <p className="text-xs text-velho-muted">
-        {email.theme}
-        {email.recipient.email && <span className="ml-2 text-zinc-400">→ {email.recipient.email}</span>}
-        {email.recipient.emailMethod === "guessed" && (
+        {shown.theme}
+        {shown.recipient.email && <span className="ml-2 text-zinc-400">→ {shown.recipient.email}</span>}
+        {shown.recipient.emailMethod === "guessed" && (
           <span className="ml-2 rounded-full bg-amber-500/15 px-1.5 text-amber-300">
             guessed address — unverified, may bounce
           </span>
         )}
       </p>
-      {email.mergedRoles.length > 0 && (
+      {shown.mergedRoles.length > 0 && (
         <p className="text-xs text-amber-200/80">
-          Also covers the {email.mergedRoles.join("/")} angle (no separate email for that role).
+          Also covers the {shown.mergedRoles.join("/")} angle (no separate email for that role).
         </p>
       )}
 
       <div className="space-y-3 rounded-xl border border-velho-line bg-velho-ink p-4 text-sm leading-relaxed text-zinc-200">
-        <p className="font-semibold text-zinc-50">{email.subject}</p>
-        <p>{email.greeting}</p>
-        {email.body.map((sentence, index) => (
+        <p className="font-semibold text-zinc-50">{shown.subject}</p>
+        <p>{shown.greeting}</p>
+        {shown.body.map((sentence, index) => (
           <p key={index}>{sentence}</p>
         ))}
         <p>
-          {email.callToAction}{" "}
+          {shown.callToAction}{" "}
           <a
-            href={email.videoUrl}
+            href={shown.videoUrl}
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1 break-all text-sky-300 hover:text-sky-200"
           >
-            {email.videoUrl} <ExternalLink className="h-3 w-3 shrink-0" />
+            {shown.videoUrl} <ExternalLink className="h-3 w-3 shrink-0" />
           </a>
         </p>
         <div className="border-t border-velho-line pt-3 text-xs text-zinc-400">
-          {email.footer.map((line) => (
+          {shown.footer.map((line) => (
             <p key={line} className="break-all">
               {line}
             </p>
@@ -154,10 +181,10 @@ export default function EmailCard({
         </div>
       </div>
 
-      {email.usedFacts.length > 0 && (
+      {shown.usedFacts.length > 0 && (
         <div className="space-y-1 text-xs text-zinc-400">
           <p className="font-semibold text-zinc-300">Facts used in this email</p>
-          {email.usedFacts.map((fact) => (
+          {shown.usedFacts.map((fact) => (
             <p key={fact.id}>
               {fact.text} —{" "}
               <a href={fact.sourceUrl} target="_blank" rel="noreferrer" className="text-sky-300">
@@ -173,21 +200,23 @@ export default function EmailCard({
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           {copied ? "Copied" : "Copy email"}
         </button>
-        <a
-          href={`/api/outreach/eml?t=${encodeURIComponent(email.token)}`}
+        <button
+          type="button"
+          onClick={download}
+          disabled={optedOut}
           className={buttonClass}
-          aria-disabled={optedOut}
-          onClick={(event) => optedOut && event.preventDefault()}
         >
           <Download className="h-3.5 w-3.5" /> Download .eml
-        </a>
+        </button>
         <a
-          href={mailtoUrl(email)}
+          href={gmailComposeUrl(shown)}
+          target="_blank"
+          rel="noopener noreferrer"
           className={buttonClass}
           aria-disabled={optedOut}
           onClick={(event) => optedOut && event.preventDefault()}
         >
-          <Mail className="h-3.5 w-3.5" /> Open in mail app
+          <Mail className="h-3.5 w-3.5" /> Open in Gmail
         </a>
         <button
           type="button"

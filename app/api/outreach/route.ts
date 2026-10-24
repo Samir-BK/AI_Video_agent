@@ -1,5 +1,6 @@
 import { normalizeDomain } from "@/lib/mockData";
 import { runOutreach } from "@/lib/outreach/orchestrator";
+import { publicAppOrigin } from "@/lib/outreach/pure/publicOrigin";
 import type { OutreachLanguage, OutreachStreamEvent } from "@/types/outreach";
 import { EXEC_ROLES } from "@/types/outreach";
 
@@ -48,8 +49,14 @@ export async function POST(request: Request): Promise<Response> {
       ? body.businessId.trim()
       : undefined;
   const language: OutreachLanguage = body.language === "fi" ? "fi" : "en";
-  const appOrigin =
-    process.env.NEXT_PUBLIC_APP_URL?.trim() || new URL(request.url).origin;
+  const appOrigin = publicAppOrigin({
+    configured: process.env.NEXT_PUBLIC_APP_URL,
+    requestOrigin: new URL(request.url).origin,
+    forwardedHost: request.headers.get("x-forwarded-host"),
+    forwardedProto: request.headers.get("x-forwarded-proto"),
+    vercelProductionHost: process.env.VERCEL_PROJECT_PRODUCTION_URL,
+    vercelHost: process.env.VERCEL_URL,
+  });
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
