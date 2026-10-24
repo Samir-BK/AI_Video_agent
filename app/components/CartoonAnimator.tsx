@@ -13,6 +13,17 @@ import type {
 } from "@/types/pipeline";
 import { BOTTLENECK_CATEGORY_LABELS } from "@/types/pipeline";
 import { CARTOON_TIMELINE } from "@/lib/cartoonPresets";
+import {
+  iconForLabel,
+  variantForCompany,
+  type BackdropMotif,
+  type CartoonVariant,
+} from "@/lib/cartoonPersonalize";
+import {
+  problemPlacements,
+  solutionGeometry,
+  type ActorPlacement,
+} from "@/app/components/cartoonLayouts";
 
 /**
  * Dynamic cartoon SVG/CSS renderer for the 45-second video.
@@ -73,12 +84,22 @@ const toPascalCase = (value: string): string =>
  * renderable icon. Unknown names degrade to a neutral glyph rather than
  * breaking the whole animation.
  */
-export const resolveIcon = (name?: string): LucideIcon => {
+export const resolveIcon = (name?: string, label?: string): LucideIcon => {
+  const lookup = (candidate: string): LucideIcon | null => {
+    const trimmed = candidate.trim();
+    const hit = ICON_REGISTRY[trimmed] ?? ICON_REGISTRY[toPascalCase(trimmed)];
+    // Lucide exports non-component helpers too; only accept renderables.
+    return hit && (typeof hit === "function" || typeof hit === "object") ? hit : null;
+  };
   if (name) {
-    const trimmed = name.trim();
-    if (ICON_REGISTRY[trimmed]) return ICON_REGISTRY[trimmed]!;
-    const pascal = toPascalCase(trimmed);
-    if (ICON_REGISTRY[pascal]) return ICON_REGISTRY[pascal]!;
+    const direct = lookup(name) ?? lookup(`${name}Icon`);
+    if (direct) return direct;
+  }
+  // LLMs invent icon names ("TruckDelay"); infer from the actor's name instead
+  // of drawing the same sparkle for every unknown.
+  if (label || name) {
+    const inferred = lookup(iconForLabel(`${label ?? ""} ${name ?? ""}`, "Sparkles"));
+    if (inferred) return inferred;
   }
   return ICON_REGISTRY.Sparkles!;
 };
@@ -98,47 +119,13 @@ const ANIM_CLASS: Record<CartoonAnimationType, string> = {
 
 type ActorTone = "danger" | "warn" | "success" | "info" | "neutral";
 
-interface ActorPlacement {
-  x: number;
-  y: number;
-  size: number;
-  /** Animation delay in seconds, so actors arrive in sequence. */
-  delay: number;
-}
-
-/** Problem mode stacks a traffic jam of manual work; solution mode is a clean row. */
-const PROBLEM_PLACEMENTS: Record<BottleneckCategory, ActorPlacement[]> = {
-  quoting_and_order_intake: [
-    { x: 128, y: 118, size: 46, delay: 0 },
-    { x: 232, y: 176, size: 52, delay: 0.25 },
-    { x: 380, y: 128, size: 50, delay: 0.5 },
-    { x: 474, y: 186, size: 44, delay: 0.7 },
-  ],
-  field_reporting: [
-    { x: 132, y: 186, size: 50, delay: 0 },
-    { x: 264, y: 118, size: 46, delay: 0.25 },
-    { x: 468, y: 150, size: 52, delay: 0.5 },
-  ],
-  scheduling: [
-    { x: 250, y: 176, size: 52, delay: 0 },
-    { x: 128, y: 118, size: 46, delay: 0.2 },
-    { x: 382, y: 124, size: 46, delay: 0.4 },
-    { x: 488, y: 150, size: 48, delay: 0.6 },
-  ],
-  cross_system_data: [
-    { x: 138, y: 190, size: 50, delay: 0 },
-    { x: 296, y: 122, size: 44, delay: 0.25 },
-    { x: 476, y: 188, size: 50, delay: 0.5 },
-  ],
+/** Category-specific "debris" that drifts around the problem stage. */
+const CATEGORY_DEBRIS: Record<BottleneckCategory, string[]> = {
+  quoting_and_order_intake: ["FileText", "Mail", "CircleDollarSign", "FileSpreadsheet", "Paperclip"],
+  field_reporting: ["ClipboardList", "Camera", "MapPin", "PhoneCall", "Truck"],
+  scheduling: ["CalendarDays", "BellRing", "Clock", "PhoneCall", "Users"],
+  cross_system_data: ["Copy", "Database", "FileSpreadsheet", "Unplug", "Keyboard"],
 };
-
-/** Solution mode always places the Velho engine in the centre. */
-const SOLUTION_PLACEMENTS: ActorPlacement[] = [
-  { x: 244, y: 150, size: 50, delay: 0.1 },
-  { x: 452, y: 150, size: 50, delay: 0.55 },
-];
-
-const ENGINE_PLACEMENT: ActorPlacement = { x: 344, y: 150, size: 76, delay: 0.3 };
 
 const PROBLEM_TONES: ActorTone[] = ["danger", "warn", "danger", "warn"];
 const SOLUTION_TONES: ActorTone[] = ["success", "success", "success"];
@@ -216,8 +203,9 @@ function IconGlyph({
   color,
   strokeWidth = 1.7,
   className,
-}: IconGlyphProps) {
-  const Icon = resolveIcon(name);
+  label,
+}: IconGlyphProps & { label?: string }) {
+  const Icon = resolveIcon(name, label);
   return (
     <g className={className} style={{ color }}>
       <Icon
@@ -237,6 +225,8 @@ interface ActorNodeProps {
   tone: ActorTone;
   accent: string;
   isEngine?: boolean;
+  /** Override the tone colour (brand-tinted solution actors). */
+  colorOverride?: string;
 }
 
 /** A cartoon "character": animated disc + icon + status badge + name. */
@@ -246,8 +236,9 @@ function ActorNode({
   tone,
   accent,
   isEngine = false,
+  colorOverride,
 }: ActorNodeProps) {
-  const color = isEngine ? "#22D3EE" : TONE_COLORS[tone];
+  const color = colorOverride ?? (isEngine ? "#22D3EE" : TONE_COLORS[tone]);
   const { x, y, size, delay } = placement;
   const radius = size / 2 + (isEngine ? 4 : 0);
   const spin = actor.animation_type === "spin_gear";
@@ -288,6 +279,7 @@ function ActorNode({
         <circle cx={x} cy={y} r={radius} fill="#0b0d13" stroke={color} strokeWidth={2} />
         <IconGlyph
           name={actor.icon}
+          label={actor.name}
           x={x}
           y={y}
           size={size * (isEngine ? 0.66 : 0.56)}
@@ -316,17 +308,21 @@ function ActorNode({
       {/* Name plate */}
       <text
         x={x}
-        y={y + radius + 26}
+        y={y + radius + 24}
         textAnchor="middle"
         className="velho-anim-rise"
         style={{
           animationDelay: `${delay + 0.15}s`,
           fill: "rgba(255,255,255,0.82)",
-          fontSize: 12,
+          fontSize: 11.5,
           fontWeight: 600,
         }}
       >
-        {truncate(actor.name, 18)}
+        {wrapText(actor.name, 16, 2).map((line, i) => (
+          <tspan key={i} x={x} dy={i === 0 ? 0 : 13}>
+            {truncate(line, 18)}
+          </tspan>
+        ))}
       </text>
     </g>
   );
@@ -344,9 +340,9 @@ interface FlowChainProps {
 /** The `node -> node -> node` diagram, with the final node carrying the verdict. */
 function FlowChain({ steps, mode, accent, y, delayBase }: FlowChainProps) {
   const nodes = flowNodes(steps);
-  const chipW = nodes.length >= 4 ? 92 : 106;
-  const gap = nodes.length >= 4 ? 26 : 34;
-  const chipH = 32;
+  const chipW = nodes.length >= 4 ? 112 : 128;
+  const gap = nodes.length >= 4 ? 24 : 34;
+  const chipH = 34;
   const total = nodes.length * chipW + (nodes.length - 1) * gap;
   const startX = (VIEW_W - total) / 2;
   const isSolution = mode === "solution";
@@ -417,7 +413,9 @@ function FlowChain({ steps, mode, accent, y, delayBase }: FlowChainProps) {
                 stroke={stroke}
                 strokeWidth={isEngineNode || isLast ? 1.7 : 1}
               />
-              {wrapText(label, 13, 2).map((line, lineIndex, all) => (
+              {wrapText(label, nodes.length >= 4 ? 13 : 15, 2).map((rawLine, lineIndex, all) => {
+                const line = truncate(rawLine, nodes.length >= 4 ? 14 : 16);
+                return (
                 <text
                   key={lineIndex}
                   x={x + chipW / 2}
@@ -431,7 +429,8 @@ function FlowChain({ steps, mode, accent, y, delayBase }: FlowChainProps) {
                 >
                   {line}
                 </text>
-              ))}
+                );
+              })}
             </g>
 
             {/* Bottleneck / success marker on the terminal node */}
@@ -463,11 +462,45 @@ interface CanvasFrameProps {
   categoryLabel: string;
   mode: "intro" | "problem" | "solution";
   accent: string;
+  backdrop: BackdropMotif;
   children: React.ReactNode;
 }
 
-/** Shared stage: ambient wash, dot grid, rounded frame and corner chrome. */
-function CanvasFrame({ title, categoryLabel, mode, accent, children }: CanvasFrameProps) {
+/** The ambient background texture — varies per company. */
+function BackdropPattern({ id, motif }: { id: string; motif: BackdropMotif }) {
+  const ink = "rgba(255,255,255,0.055)";
+  switch (motif) {
+    case "grid":
+      return (
+        <pattern id={id} width="32" height="32" patternUnits="userSpaceOnUse">
+          <path d="M32 0H0V32" fill="none" stroke={ink} strokeWidth="1" />
+        </pattern>
+      );
+    case "waves":
+      return (
+        <pattern id={id} width="48" height="20" patternUnits="userSpaceOnUse">
+          <path d="M0 10 Q12 2 24 10 T48 10" fill="none" stroke={ink} strokeWidth="1" />
+        </pattern>
+      );
+    case "diagonal":
+      return (
+        <pattern id={id} width="18" height="18" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
+          <line x1="0" y1="0" x2="0" y2="18" stroke={ink} strokeWidth="1" />
+        </pattern>
+      );
+    case "dots":
+    default:
+      return (
+        <pattern id={id} width="26" height="26" patternUnits="userSpaceOnUse">
+          <circle cx="1.4" cy="1.4" r="1" fill={ink} />
+        </pattern>
+      );
+  }
+}
+
+/** Shared stage: ambient wash, backdrop motif, rounded frame and corner chrome. */
+function CanvasFrame({ title, categoryLabel, mode, accent, backdrop, children }: CanvasFrameProps) {
+  // Problem stays alarm-red; the solution blends success green with the brand.
   const wash = mode === "problem" ? "#F43F5E" : mode === "solution" ? "#10B981" : accent;
   const dotId = `dots-${mode}`;
   const glowId = `glow-${mode}`;
@@ -481,9 +514,7 @@ function CanvasFrame({ title, categoryLabel, mode, accent, children }: CanvasFra
       aria-label={title}
     >
       <defs>
-        <pattern id={dotId} width="26" height="26" patternUnits="userSpaceOnUse">
-          <circle cx="1.4" cy="1.4" r="1" fill="rgba(255,255,255,0.055)" />
-        </pattern>
+        <BackdropPattern id={dotId} motif={backdrop} />
         <radialGradient id={glowId} cx="50%" cy="42%" r="62%">
           <stop offset="0%" stopColor={wash} stopOpacity={mode === "intro" ? 0.2 : 0.16} />
           <stop offset="100%" stopColor="#08090d" stopOpacity={0} />
@@ -492,6 +523,8 @@ function CanvasFrame({ title, categoryLabel, mode, accent, children }: CanvasFra
 
       <rect width={VIEW_W} height={VIEW_H} fill="#08090d" />
       <rect width={VIEW_W} height={VIEW_H} fill={`url(#${glowId})`} />
+      {/* Brand tint in the corner so every company's frame has its own colour. */}
+      <circle cx={VIEW_W - 40} cy={VIEW_H - 30} r={220} fill={accent} opacity={0.07} />
       <rect width={VIEW_W} height={VIEW_H} fill={`url(#${dotId})`} />
 
       <rect
@@ -643,10 +676,121 @@ interface CartoonSceneProps {
   category: BottleneckCategory;
   companyName: string;
   accent: string;
+  palette: BrandPalette;
   mode: "problem" | "solution";
+  variant: CartoonVariant;
 }
 
-function CartoonStage({ scene, category, companyName, accent, mode }: CartoonSceneProps) {
+/** Returns the hex only if it is bright enough to read on the #08090d stage. */
+const legibleOnDark = (hex: string | undefined): string | null => {
+  const match = hex?.trim().match(/^#?([0-9a-f]{6}|[0-9a-f]{3})$/i);
+  if (!match) return null;
+  const raw = match[1]!.length === 3 ? match[1]!.split("").map((c) => c + c).join("") : match[1]!;
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(raw.slice(i, i + 2), 16) / 255) as [number, number, number];
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const saturation = Math.max(r, g, b) - Math.min(r, g, b);
+  // Too dark, or a near-grey that would read as "disabled".
+  if (luminance < 0.28 || saturation < 0.12) return null;
+  return `#${raw}`;
+};
+
+/** Small icons drifting around the problem stage — the "mess". */
+function DebrisField({ category, seed }: { category: BottleneckCategory; seed: number }) {
+  const icons = CATEGORY_DEBRIS[category];
+  // Corners and edges only, so debris never sits on actors or the chain.
+  const spots = [
+    [58, 92], [584, 88], [66, 214], [580, 214], [190, 72], [450, 74],
+  ] as const;
+  return (
+    <g opacity={0.5}>
+      {spots.map(([x, y], i) => {
+        const icon = icons[(seed + i) % icons.length]!;
+        return (
+          <g
+            key={i}
+            className="velho-svg-anim velho-anim-drift"
+            style={{ animationDelay: `${(i * 0.7 + seed % 5) % 3}s`, animationDuration: `${3.2 + (i % 3) * 0.9}s` }}
+          >
+            <IconGlyph name={icon} x={x} y={y} size={16 + ((seed + i) % 3) * 3} color="#FB923C" strokeWidth={1.6} />
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+/** Problem-layout props that make each composition read differently. */
+function ProblemProps({ variant, color }: { variant: CartoonVariant; color: string }) {
+  switch (variant.problemLayout) {
+    case "conveyor":
+      // A stalled belt under the items.
+      return (
+        <g opacity={0.6}>
+          <rect x={92} y={204} width={456} height={8} rx={4} fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.12)" />
+          {Array.from({ length: 12 }, (_, i) => (
+            <circle key={i} cx={104 + i * 39} cy={208} r={2} fill="rgba(255,255,255,0.25)" />
+          ))}
+        </g>
+      );
+    case "split":
+      // A crack between two disconnected silos.
+      return (
+        <path
+          d="M320 96 L310 124 L328 150 L312 178 L326 206"
+          fill="none"
+          stroke={color}
+          strokeWidth={2}
+          strokeDasharray="5 5"
+          className="velho-anim-dash-march"
+          opacity={0.7}
+        />
+      );
+    case "orbit":
+      // A tangled loop the work keeps circling.
+      return (
+        <ellipse
+          cx={320}
+          cy={170}
+          rx={190}
+          ry={44}
+          fill="none"
+          stroke={color}
+          strokeOpacity={0.35}
+          strokeDasharray="3 7"
+          className="velho-anim-dash-march"
+        />
+      );
+    case "pileup":
+    default:
+      // Tangled red connectors between neighbouring items.
+      return null;
+  }
+}
+
+/** Glowing data packets travelling along the solution lanes. */
+function PacketLanes({ lanes, color }: { lanes: Array<[number, number, number, number]>; color: string }) {
+  return (
+    <g>
+      {lanes.map(([x1, y1, x2, y2], i) => (
+        <g key={i}>
+          <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeOpacity={0.35} strokeWidth={2} strokeDasharray="4 5" className="velho-anim-dash-march" />
+          {[0, 1].map((k) => (
+            <circle key={k} r={3.4} fill={color}>
+              <animateMotion
+                dur="1.6s"
+                begin={`${i * 0.4 + k * 0.8}s`}
+                repeatCount="indefinite"
+                path={`M${x1},${y1} L${x2},${y2}`}
+              />
+            </circle>
+          ))}
+        </g>
+      ))}
+    </g>
+  );
+}
+
+function CartoonStage({ scene, category, companyName, accent, palette, mode, variant }: CartoonSceneProps) {
   const isSolution = mode === "solution";
 
   const actors = useMemo(() => {
@@ -659,21 +803,18 @@ function CartoonStage({ scene, category, companyName, accent, mode }: CartoonSce
         icon: "Cog",
         animation_type: "spin_gear" as CartoonAnimationType,
       };
-      return {
-        engine,
-        others: [withoutEngine[0], withoutEngine[1], engine].filter(
-          (entry): entry is CartoonActor => Boolean(entry),
-        ),
-      };
+      return { engine, others: withoutEngine.slice(0, variant.solutionLayout === "funnel" ? 3 : 2) };
     }
     return { engine: null, others: list.slice(0, 4) };
-  }, [isSolution, scene.actors]);
+  }, [isSolution, scene.actors, variant.solutionLayout]);
 
-  const placements = isSolution
-    ? SOLUTION_PLACEMENTS
-    : (PROBLEM_PLACEMENTS[category] ?? PROBLEM_PLACEMENTS.cross_system_data);
+  const geometry = isSolution ? solutionGeometry(variant.solutionLayout, actors.others.length) : null;
+  const placements: ActorPlacement[] = geometry
+    ? geometry.others
+    : problemPlacements(variant.problemLayout, actors.others.length);
 
-  const chainY = 252;
+  // Solution actors pick up the company's brand colour; the output stays green.
+  const brandColor = legibleOnDark(palette.primary) ?? legibleOnDark(palette.accent) ?? "#38BDF8";
 
   return (
     <g>
@@ -681,27 +822,28 @@ function CartoonStage({ scene, category, companyName, accent, mode }: CartoonSce
           artwork reads as motion design; narration belongs to the voiceover
           and the single caption strip in VideoPlayer. */}
 
-      {/* Actors */}
-      {isSolution && actors.engine ? (
-        <ActorNode
-          actor={actors.engine}
-          placement={ENGINE_PLACEMENT}
-          tone="info"
-          accent={accent}
-          isEngine
-        />
+      {isSolution ? (
+        <PacketLanes lanes={geometry!.lanes} color="#10B981" />
+      ) : (
+        <>
+          <DebrisField category={category} seed={variant.debrisSeed} />
+          <ProblemProps variant={variant} color="#F43F5E" />
+        </>
+      )}
+
+      {isSolution && actors.engine && geometry ? (
+        <ActorNode actor={actors.engine} placement={geometry.engine} tone="info" accent={accent} isEngine />
       ) : null}
 
       {actors.others.map((actor, index) => {
-        const placement = isSolution
-          ? (placements[index] ?? SOLUTION_PLACEMENTS[SOLUTION_PLACEMENTS.length - 1]!)
-          : (placements[index] ?? placements[placements.length - 1]!);
+        const placement = placements[index] ?? placements[placements.length - 1]!;
         const tone = isSolution
           ? (SOLUTION_TONES[index] ?? "success")
           : (PROBLEM_TONES[index % PROBLEM_TONES.length] ?? "danger");
-        const isEngine = isSolution && isEngineActor(actor.name);
-
-        if (isEngine) return null;
+        // In the funnel the middle slot is the output; elsewhere the last one.
+        const isOutput =
+          isSolution &&
+          (variant.solutionLayout === "funnel" ? index === 1 : index === actors.others.length - 1);
         return (
           <ActorNode
             key={`${actor.name}-${index}`}
@@ -709,18 +851,12 @@ function CartoonStage({ scene, category, companyName, accent, mode }: CartoonSce
             placement={placement}
             tone={tone}
             accent={accent}
+            colorOverride={isSolution && !isOutput ? brandColor : undefined}
           />
         );
       })}
 
-      {/* Flow diagram */}
-      <FlowChain
-        steps={scene.flow_diagram_steps}
-        mode={mode}
-        accent={accent}
-        y={chainY}
-        delayBase={1}
-      />
+      <FlowChain steps={scene.flow_diagram_steps} mode={mode} accent={accent} y={252} delayBase={1} />
 
       {/* Wordless status stamp — a quiet watermark, not a headline. */}
       <text
@@ -729,9 +865,7 @@ function CartoonStage({ scene, category, companyName, accent, mode }: CartoonSce
         textAnchor="end"
         style={{ fill: "rgba(255,255,255,0.24)", fontSize: 8.5, fontWeight: 600, letterSpacing: 0.8 }}
       >
-        {isSolution
-          ? "VELHO APPLIED INTELLIGENCE"
-          : `${companyName.toUpperCase()} · CURRENT STATE`}
+        {isSolution ? "VELHO APPLIED INTELLIGENCE" : `${truncate(companyName.toUpperCase(), 28)} · CURRENT STATE`}
       </text>
     </g>
   );
@@ -755,8 +889,10 @@ export default function CartoonAnimator({
   className,
 }: CartoonAnimatorProps) {
   const mode: "intro" | "problem" | "solution" = phase ?? "intro";
-  const accent = palette.accent;
-  const categoryLabel = BOTTLENECK_CATEGORY_LABELS[category];
+  // A near-black or grey brand accent vanishes on the dark stage.
+  const accent = legibleOnDark(palette.accent) ?? legibleOnDark(palette.primary) ?? "#7DD3FC";
+  const categoryLabel = BOTTLENECK_CATEGORY_LABELS[category] ?? "Operations";
+  const variant = useMemo(() => variantForCompany(domain || companyName), [domain, companyName]);
 
   const title =
     mode === "intro"
@@ -774,6 +910,7 @@ export default function CartoonAnimator({
         categoryLabel={mode === "intro" ? "Personalized intro" : categoryLabel}
         mode={mode}
         accent={accent}
+        backdrop={variant.backdrop}
       >
         {mode === "intro" ? (
           <IntroScene
@@ -789,10 +926,12 @@ export default function CartoonAnimator({
           <CartoonStage
             key={`${mode}-${cartoonScene.scene_index}`}
             scene={cartoonScene}
-            category={category}
+            category={category in CATEGORY_DEBRIS ? category : "cross_system_data"}
             companyName={companyName}
             accent={accent}
+            palette={palette}
             mode={mode === "problem" ? "problem" : "solution"}
+            variant={variant}
           />
         ) : (
           <FallbackStage mode={mode} accent={accent} categoryLabel={categoryLabel} />

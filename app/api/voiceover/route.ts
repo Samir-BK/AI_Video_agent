@@ -1,20 +1,27 @@
 import { NextResponse } from "next/server";
 
 import { synthesizeSpeech } from "@/lib/tts";
-import type { VoiceoverRequest, VoiceoverUnavailable } from "@/types/pipeline";
+import type {
+  VoiceoverClip,
+  VoiceoverRequest,
+  VoiceoverUnavailable,
+} from "@/types/pipeline";
 
 /**
- * POST /api/voiceover  { text } -> audio bytes (audio/mpeg or audio/wav)
+ * POST /api/voiceover  { text } -> JSON clip
  *
- * Keeps provider keys server-side. When no neural voice is available it
- * returns 200 JSON { provider: "browser" } so the player falls back to
- * speechSynthesis instead of failing on stage.
+ * One request is one scene, not one sentence. The body carries the audio
+ * plus word timings so the player can stretch that clip across the scene
+ * and move the captions with the words actually being spoken.
+ *
+ * When no neural voice is available the body is
+ * { provider: "browser", reason } and the player uses speechSynthesis.
  */
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
-const MAX_CHARS = 600;
+const MAX_CHARS = 900;
 
 const unavailable = (reason: string): NextResponse<VoiceoverUnavailable> =>
   NextResponse.json(
@@ -41,7 +48,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  const { result, errors } = await synthesizeSpeech(text);
+  const { result, errors } = await synthesizeSpeech(text, request.signal);
   if (!result) {
     const reason =
       errors.length > 0
@@ -51,12 +58,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     return unavailable(reason);
   }
 
-  return new NextResponse(result.audio, {
+  const clip: VoiceoverClip = {
+    provider: result.provider,
+    mime: result.contentType,
+    audio: Buffer.from(result.audio).toString("base64"),
+    words: result.words,
+  };
+
+  return NextResponse.json(clip, {
     status: 200,
-    headers: {
-      "Content-Type": result.contentType,
-      "Cache-Control": "private, max-age=3600",
-      "X-Voiceover-Provider": result.provider,
-    },
+    headers: { "Cache-Control": "private, max-age=3600" },
   });
 }

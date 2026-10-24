@@ -22,6 +22,7 @@ import {
   callLlm,
   extractJson,
   isLlmConfigured,
+  LlmModelRetiredError,
   LlmNotConfiguredError,
   LlmTimeoutError,
 } from "@/lib/llm";
@@ -40,6 +41,8 @@ import {
   classifyBottleneck,
   isBottleneckCategory,
 } from "@/lib/cartoonPresets";
+import { personalizeScenes, sanitizeAuthoredScene } from "@/lib/cartoonPersonalize";
+import { prepareVoiceover } from "@/lib/voiceoverBudget";
 import { paletteFromColors, type ScrapeResult } from "@/lib/scraper";
 
 /**
@@ -267,15 +270,18 @@ const runAgent = async <T,>(
     const timedOut = error instanceof LlmTimeoutError;
 
     // Surface the actionable cause instead of a blanket "failed" note, so the
-    // pipeline log distinguishes "you never set a key" from "the key errored".
+    // pipeline log distinguishes "you never set a key" from "your model was
+    // retired" from "the key errored".
     const note =
       error instanceof LlmNotConfiguredError
         ? error.message
-        : error instanceof LlmTimeoutError
-          ? `${agentName} hit the ${AGENT_TIMEOUT_MS}ms deadline; served fallback data`
-          : timedOut
-            ? `${agentName} timed out; served fallback data`
-            : fallbackNote;
+        : error instanceof LlmModelRetiredError
+          ? error.message
+          : error instanceof LlmTimeoutError
+            ? `${agentName} hit the ${AGENT_TIMEOUT_MS}ms deadline; served fallback data`
+            : timedOut
+              ? `${agentName} timed out; served fallback data`
+              : fallbackNote;
 
     const reason =
       error instanceof Error ? error.message.slice(0, 160) : "unknown error";
@@ -310,7 +316,7 @@ Schema:
     "tone": string (short voice description)
   }
 }
-Be specific and grounded in the provided content. Never invent facts not supported by it.`;
+Be specific and grounded in the provided content (or, when no content is available, in well-known public facts about the company). Never invent figures.`;
 
 export const runDiscoveryAgent = async (
   domain: string,
@@ -324,9 +330,11 @@ export const runDiscoveryAgent = async (
       // Check credentials first: it is the only failure with a clear fix, and
       // the scrape error is meaningless if we could never call the model.
       if (!isLlmConfigured()) throw new LlmNotConfiguredError();
-      if (!scrape.ok) {
-        throw new Error(`Scrape failed: ${scrape.error ?? "no content"}`);
-      }
+      // A blocked scrape (bot walls on big brands) must not drop us onto a
+      // domain-keyword guess: the model usually knows the company already.
+      const siteContent = scrape.ok
+        ? scrape.combinedText
+        : `(The website could not be fetched: ${scrape.error ?? "no content"}. Use your own knowledge of the company at ${domain}. If you do not recognise it, infer conservatively from the domain name.)`;
 
       const mock = mockDiscovery(domain);
       const scrapedColors = scrape.pages.flatMap((page) => page.colors);
@@ -343,7 +351,7 @@ export const runDiscoveryAgent = async (
             content: `Target domain: ${domain}
 
 Scraped website content:
-${scrape.combinedText}
+${siteContent}
 
 Detected brand colours from CSS: ${scrapedColors.slice(0, 5).join(", ") || "none detected"}
 
@@ -403,30 +411,31 @@ Respond with ONLY a JSON object, no prose, no markdown fences.
 Schema:
 {
   "title": string (3-5 words, e.g. "Manual Quote Intake"),
-  "summary": string (one sentence naming the bottleneck and why it costs them),
+  "summary": string (one plain-English sentence a CEO would recognise from their own week: WHO does WHAT by hand, in WHICH tool, and what it delays. Bad: "Inefficient data workflows hinder scalability." Good: "Your planners copy every customer order from email into SAP by hand, so production waits a day for each change."),
   "severity": "low" | "medium" | "high" | "critical",
-  "department": string (where the bottleneck lives),
-  "symptoms": string[] (3 specific observable symptoms),
+  "department": string (where the bottleneck lives, 1-3 words, e.g. "Order Desk"),
+  "symptoms": string[] (3 specific observable symptoms, each a short sentence naming the manual action, e.g. "Orders are re-typed from PDF into SAP"),
   "impact": {
     "hoursLostPerWeek": number (realistic integer, 5-60),
     "estimatedCost": string (short money framing, e.g. "$18k/mo in delayed quotes"),
     "risk": string (downstream business risk in one sentence)
   },
-  "brokenSystems": string[] (3-5 named systems/tools that don't talk to each other)
-}`;
+  "brokenSystems": string[] (3-5 short names of the real tools involved, 1-2 words each, e.g. "Outlook", "SAP", "Excel", "WhatsApp" — these are drawn as characters in the video)
+}
+The bottleneck must fit THIS company's actual business (a bank is not a construction firm; a clinic is not a SaaS company). Avoid jargon such as "synergy", "digital transformation", "streamline", "leverage".`;
 
 export const runProblemAgent = async (
   discovery: DiscoveryOutput,
 ): Promise<AgentEnvelope<ProblemOutput>> => {
   const domain = discovery.domain;
-  const fallback = () => mockProblem(domain);
+  const fallback = () => mockProblem(domain, { discovery });
 
   return runAgent(
     "Problem Agent",
     async () => {
       if (!isLlmConfigured()) throw new LlmNotConfiguredError();
 
-      const mock = mockProblem(domain);
+      const mock = mockProblem(domain, { discovery });
 
       const raw = await callLlm({
         timeoutMs: AGENT_TIMEOUT_MS,
@@ -512,14 +521,14 @@ export const runSolutionAgent = async (
   problem: ProblemOutput,
 ): Promise<AgentEnvelope<SolutionOutput>> => {
   const domain = discovery.domain;
-  const fallback = () => mockSolution(domain);
+  const fallback = () => mockSolution(domain, { discovery, problem });
 
   return runAgent(
     "Solution Agent",
     async () => {
       if (!isLlmConfigured()) throw new LlmNotConfiguredError();
 
-      const mock = mockSolution(domain);
+      const mock = mockSolution(domain, { discovery, problem });
 
       const raw = await callLlm({
         timeoutMs: AGENT_TIMEOUT_MS,
@@ -599,69 +608,53 @@ Design the 3-step Velho solution architecture.`,
 /* Step 4 — Video Script                                               */
 /* ------------------------------------------------------------------ */
 
-const VIDEO_SYSTEM = `You are the Video Script Agent for Velho Applied Intelligence.
-Write a 45-second video personalized to the target company, shown to its CEO.
-The visuals are CARTOONISH VECTOR DIAGRAMS (clean flat SVG with simple animated characters, icons, arrows and flow nodes) — NOT stock footage.
-The visuals are WORDLESS: on-screen graphics carry no sentences, and the voiceover is the only narration.
-Timing is FIXED and must not drift: scene 1 = 0-6s (company identity intro), scene 2 = 6-24s (cartoonish PROBLEM animation), scene 3 = 24-45s (cartoonish SOLUTION flow + meeting CTA).
-Voiceover must be speakable in the allotted seconds, roughly 2.5 words per second (scene 1 ~14 words, scene 2 ~45 words, scene 3 ~52 words).
-Keep each voiceover one connected, natural piece of narration — do not pad with filler.
-The voiceover is read by a professional neural narrator, so write it like a premium B2B launch film: short, punchy, spoken sentences; no lists, symbols, URLs, parentheses or abbreviations; write numbers as a narrator would say them.
-Narrative arc (mandatory):
-- Scene 1: greet the company by name and say this video was made for them.
-- Scene 2: open with "Here is the problem." then name the bottleneck, what it looks like day to day, and the hours or money it costs.
-- Scene 3: open with "Now, the solution." then explain what Velho built for them, how it works in plain words, the outcome and time to go live, and END with a clear call to action that they can book a fifteen-minute walkthrough with one click, right below the video.
-Respond with ONLY a JSON object, no prose, no markdown fences.
+const VIDEO_SYSTEM = `You are the Video Script Agent for Velho Applied Intelligence. Write a 45-second video script personalized to the target company, shown to its CEO. Reply with ONLY a JSON object — no prose, no markdown fences.
 
-First classify the bottleneck into exactly one of these four categories, then author the two cartoon beats:
-- "quoting_and_order_intake" (quotes, RFQs, orders, bids, order entry)
-- "field_reporting" (field/job reports, proof of delivery, inspections)
-- "scheduling" (appointments, dispatch, rosters, shifts)
-- "cross_system_data" (same data re-keyed across disconnected systems)
+Timing is FIXED: scene 1 = 0-6s (company identity), scene 2 = 6-24s (the problem), scene 3 = 24-45s (the solution + call to action).
+
+VOICEOVER RULES (this is spoken aloud by a neural narrator):
+- Pace: roughly 2.4 words per second. Scene 1 about 14 words, scene 2 about 42 words, scene 3 about 48 words. Narration that runs long is cut off mid-sentence.
+- Use only WORDS: no numbers, symbols, ampersands, arrows, URLs, parentheses or abbreviations. Write "forty hours", never "40 hours"; "four systems", never "4 systems".
+- Write complete grammatical sentences, because a narrator cannot repair a broken one.
+- Speak in the second person about the listener's own team, and never say you studied or analysed anything.
+
+NARRATIVE ARC (mandatory):
+- Scene 1: greet the company by name and say this video was made for them.
+- Scene 2: open with "Here is the problem." then describe it in plain language a CEO recognises from their own week: what the work looks like, who is stuck, and what it costs. Name the concrete manual step (re-typing, chasing, double entry), never a category of software.
+- Scene 3: open with "Now, the solution." then answer THAT SAME problem directly — the fix must pick up the exact manual step named in scene 2 and say what happens to it instead. Then the outcome, the time to go live, and END with a call to action to book a fifteen-minute walkthrough with one click below the video.
+The problem and solution must be two halves of one argument.
+
+Also classify the bottleneck into exactly one of: "quoting_and_order_intake" (quotes, RFQs, orders, bids), "field_reporting" (field/job reports, proof of delivery, inspections), "scheduling" (appointments, dispatch, rosters, shifts), "cross_system_data" (the same data re-keyed across disconnected systems).
+
+Then author exactly two CARTOON beats. The visuals are wordless flat vector diagrams, so these fields describe SHAPES and MOTION only — never a sentence to be read on screen. Ground every actor and flow step in this company's real tools from the input, never a generic placeholder like "System A" or "Manual Spreadsheet".
 
 Schema:
 {
   "headline": string (landing page headline),
-  "voiceStyle": string (delivery direction),
   "bottleneckCategory": "quoting_and_order_intake" | "field_reporting" | "scheduling" | "cross_system_data",
   "scenes": [
-    {
-      "id": 1,
-      "startSec": 0, "endSec": 6,
-      "title": string (short scene label),
-      "voiceover": string (spoken words only, no stage directions),
-      "overlays": [
-        { "text": string, "position": "top"|"center"|"bottom", "emphasis": "primary"|"secondary"|"accent" }
-      ] (2-3 overlays),
-      "graphicCue": string (what the visual layer shows),
-      "icon": string (a Lucide React icon name, e.g. "FileStack"),
-      "transition": "fade"|"slide"|"zoom"|"wipe"
-    }
-  ] (exactly 3 scenes),
+    { "id": 1, "title": string (3-5 words), "voiceover": string },
+    { "id": 2, "title": string (3-5 words), "voiceover": string },
+    { "id": 3, "title": string (3-5 words), "voiceover": string }
+  ],
   "cartoonScenes": [
     {
-      "scene_index": 1,
-      "time_range": "6s-24s",
       "type": "problem_animation",
-      "actors": [
-        { "name": string (e.g. "Stressed Manager", "Manual Spreadsheet", "Exploding Inbox"), "icon": string (a real Lucide icon name, e.g. "FileSpreadsheet", "UserX", "Clock"), "animation_type": "shake"|"bounce"|"pulse"|"slide_in"|"spin_gear"|"fade_red_to_green" }
-      ] (2-4 actors),
-      "visual_metaphor": string (one vivid sentence describing the cartoon of THIS company's specific manual bottleneck),
-      "flow_diagram_steps": string[] (exactly a chain alternating node labels with "-->", e.g. ["Unstructured Email", "-->", "Manual Copy-Paste", "-->", "Excel Error"]),
-      "text_caption": string (6-10 word caption shown under the cartoon)
+      "actors": [ { "name": string (1-3 words, e.g. "Inbound RFQ PDF", "Stressed Estimator"), "icon": string (a real Lucide React icon name, e.g. "FileSpreadsheet", "UserX", "Clock"), "animation_type": "shake" | "bounce" | "pulse" } ] (2-4 actors),
+      "visual_metaphor": string (one vivid sentence describing THIS company's specific manual bottleneck),
+      "flow_diagram_steps": string[] (a chain of 3 or 4 node labels alternating with "-->", each label 1-3 words, e.g. ["Unstructured Email", "-->", "Manual Copy-Paste", "-->", "Excel Error"]),
+      "text_caption": string (6-10 words)
     },
     {
-      "scene_index": 2,
-      "time_range": "24s-45s",
       "type": "solution_animation",
-      "actors": [ same shape as above — include the "Velho AI Engine" gear actor with "spin_gear" ],
-      "visual_metaphor": string (one vivid sentence: messy red inputs flowing into the Velho AI Engine and emerging as clean green automated outputs),
-      "flow_diagram_steps": string[] (chain ending in the automated outcome, e.g. ["RFQ PDF", "-->", "Velho AI Engine", "-->", "Auto ERP Entry"]),
-      "text_caption": string (6-10 word caption)
+      "actors": [ same shape, and MUST include an actor named "Velho AI Engine" with icon "Cog" and animation_type "spin_gear" ] (3 actors),
+      "visual_metaphor": string (one vivid sentence: messy inputs flowing into the Velho AI Engine and emerging as clean automated outputs),
+      "flow_diagram_steps": string[] (chain of 3 or 4 nodes ending in the automated outcome, e.g. ["RFQ PDF", "-->", "Velho AI Engine", "-->", "Auto ERP Entry"]),
+      "text_caption": string (6-10 words)
     }
-  ] (exactly 2 beats: problem then solution)
+  ]
 }
-Ground every actor, metaphor and flow step in this company's real tools, departments and symptoms. Never use generic placeholders.`;
+Output no other fields. Keep every string short — this response has a hard time limit.`;
 
 export const runVideoScriptAgent = async (
   discovery: DiscoveryOutput,
@@ -669,18 +662,23 @@ export const runVideoScriptAgent = async (
   solution: SolutionOutput,
 ): Promise<AgentEnvelope<VideoScriptOutput>> => {
   const domain = discovery.domain;
-  const fallback = () => mockVideoScript(domain);
+  const fallback = () => mockVideoScript(domain, { discovery, problem, solution });
 
   return runAgent(
     "Video Script Agent",
     async () => {
       if (!isLlmConfigured()) throw new LlmNotConfiguredError();
 
-      const mock = mockVideoScript(domain);
-      const archetype = selectArchetype(domain);
+      const mock = mockVideoScript(domain, { discovery, problem, solution });
+      const archetype = selectArchetype(domain, discovery.industry);
 
       const raw = await callLlm({
-        timeoutMs: AGENT_TIMEOUT_MS,
+        // The script agent writes the largest payload in the pipeline; the
+        // problem/solution agents it depends on have already consumed part of
+        // the 6s budget, so it gets its own full window plus headroom.
+        // No maxTokens: on a reasoning model the cap includes thinking tokens,
+        // which truncates the JSON before it is complete.
+        timeoutMs: AGENT_TIMEOUT_MS + 4000,
         temperature: 0.8,
         json: true,
         messages: [
@@ -766,7 +764,12 @@ Classify the bottleneck, then write the 3-scene script with the two cartoon beat
           startSec: slot.start,
           endSec: slot.end,
           title: asString(candidate.title, mockScene.title),
-          voiceover: asString(candidate.voiceover, mockScene.voiceover),
+          // Fitted to this scene's own slot: a spoken line that overruns its
+          // window gets cut off mid-sentence by the next beat.
+          voiceover: prepareVoiceover(
+            asString(candidate.voiceover, mockScene.voiceover),
+            slot.end - slot.start,
+          ),
           overlays: overlays.length > 0 ? overlays : mockScene.overlays,
           graphicCue: asString(candidate.graphicCue, mockScene.graphicCue),
           icon: asString(candidate.icon, archetype.scenes[index]?.icon ?? "Sparkles"),
@@ -780,17 +783,19 @@ Classify the bottleneck, then write the 3-scene script with the two cartoon beat
       // Cartoon storyboard: prefer the model's authored beats, otherwise use
       // the hand-authored preset for the classified category. Either way the
       // video is specific to this company's bottleneck.
-      const presetScenes = buildCartoonScenes(
-        category,
-        discovery.companyName,
+      // The preset is personalised with this company's own systems and solution
+      // steps, so even the fallback beat is about them, not a stock example.
+      const presetScenes = personalizeScenes(
+        buildCartoonScenes(category, discovery.companyName),
+        { companyName: discovery.companyName, problem, solution },
       );
       const authoredScenes = asCartoonScenes(parsed.cartoonScenes);
 
-      const cartoonScenes: CartoonAnimationScene[] = authoredScenes
-        ? [0, 1].map(
-            (index) => authoredScenes[index] ?? presetScenes[index]!,
-          )
-        : presetScenes;
+      const cartoonScenes: CartoonAnimationScene[] = [0, 1].map((index) => {
+        const fallbackBeat = presetScenes[index]!;
+        const authored = authoredScenes?.[index];
+        return authored ? sanitizeAuthoredScene(authored, fallbackBeat) : fallbackBeat;
+      });
 
       const data: VideoScriptOutput = {
         durationSec: CARTOON_TIMELINE.solutionEnd,
@@ -838,14 +843,14 @@ export const runEmailAgent = async (
   videoUrl: string,
 ): Promise<AgentEnvelope<EmailOutput>> => {
   const domain = discovery.domain;
-  const fallback = () => mockEmail(domain, videoUrl);
+  const fallback = () => mockEmail(domain, videoUrl, { discovery, problem, solution });
 
   return runAgent(
     "Copywriter Agent",
     async () => {
       if (!isLlmConfigured()) throw new LlmNotConfiguredError();
 
-      const mock = mockEmail(domain, videoUrl);
+      const mock = mockEmail(domain, videoUrl, { discovery, problem, solution });
 
       const raw = await callLlm({
         timeoutMs: AGENT_TIMEOUT_MS,
