@@ -1,6 +1,6 @@
 import "server-only";
 
-import { extractSocialLinks, structuredText } from "@/lib/outreach/pure/htmlData";
+import { extractSocialLinks, hiddenEmails, structuredText } from "@/lib/outreach/pure/htmlData";
 import type { FetchedPage } from "@/types/outreach";
 
 /**
@@ -74,6 +74,8 @@ const extractEmails = (html: string): string[] => {
   for (const match of htmlToText(html).matchAll(EMAIL_PATTERN)) {
     found.add(match[0].toLowerCase());
   }
+  // Addresses hidden from bots (Cloudflare protection, "name(at)example.fi").
+  for (const address of hiddenEmails(html)) found.add(address);
   return [...found].slice(0, 100);
 };
 

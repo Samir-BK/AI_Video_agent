@@ -14,7 +14,7 @@ import type { FetchedPage } from "@/types/outreach";
  */
 
 const LINK_KEYWORDS =
-  /(management|leadership|johto|hallitus|board|team|tiimi|about|meista|yritys|yhtio|company|investor|sijoittaj|strategy|strategia|news|uutis|tiedot|press|media|career|rekry|ura|tyopaik)/i;
+  /(management|leadership|johto|hallitus|board|team|tiimi|about|meista|yritys|yhtio|company|investor|sijoittaj|strategy|strategia|news|uutis|tiedot|press|media|career|rekry|ura|tyopaik|contact|kontakt|yhteys)/i;
 
 const GUESSED_PATHS = [
   "/about",
@@ -36,6 +36,9 @@ const GUESSED_PATHS = [
   "/careers",
   "/ura",
   "/rekry",
+  // Contact pages often list leaders' work addresses.
+  "/yhteystiedot",
+  "/contact",
 ];
 
 const PAGE_TIMEOUT_MS = 4000;
@@ -53,7 +56,7 @@ const MAX_SECOND_HOP = 4;
 const linkPriority = (url: string): number => {
   const path = new URL(url).pathname.toLowerCase();
   if (/(management|leadership|johto|johtoryhm)/.test(path)) return 0;
-  if (/(investor|sijoittaj|strateg)/.test(path)) return 1;
+  if (/(investor|sijoittaj|strateg|yhteystied|contact|kontakt)/.test(path)) return 1;
   if (/(news|uutis|press|tiedot|media)/.test(path)) return 2;
   if (/(career|rekry|ura|tyopaik)/.test(path)) return 3;
   return 4;

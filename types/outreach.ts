@@ -162,7 +162,13 @@ export interface EntityMatch {
 
 export interface LeaderEmail {
   address: string | null;
-  method: "published" | "pattern" | "none";
+  /**
+   * published = on the company's pages; pattern = the company's published
+   * format (e.g. etunimi.sukunimi@) applied to the name; guessed = no format
+   * published, the common Finnish first.last@ format on a domain that
+   * accepts mail — UNVERIFIED, may bounce.
+   */
+  method: "published" | "pattern" | "guessed" | "none";
   confidence: Confidence;
 }
 
@@ -238,7 +244,13 @@ export type RoleEmailStatus =
 
 export interface RoleEmail {
   role: ExecRole;
-  recipient: { name: string | null; title: string; email: string | null };
+  recipient: {
+    name: string | null;
+    title: string;
+    email: string | null;
+    /** How the address was found; "guessed" addresses are unverified. */
+    emailMethod?: LeaderEmail["method"];
+  };
   /** One-line angle for this role. */
   theme: string;
   subject: string;

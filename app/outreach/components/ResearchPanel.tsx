@@ -114,13 +114,27 @@ export default function ResearchPanel({ result, onPickCompany, disabled }: Resea
                       </a>
                     )}
                     <span className="ml-28 block text-xs text-velho-muted">
-                      {leader.email.address
-                        ? `${leader.email.address} · ${
+                      {leader.email.address ? (
+                        leader.email.method === "guessed" ? (
+                          <>
+                            {leader.email.address} ·{" "}
+                            <span
+                              className="rounded-full bg-amber-500/15 px-1.5 text-amber-300"
+                              title="No address format is published anywhere, so this uses the most common Finnish format (firstname.lastname@). The domain accepts mail, but this address may not exist."
+                            >
+                              guessed — unverified
+                            </span>
+                          </>
+                        ) : (
+                          `${leader.email.address} · ${
                             leader.email.method === "published"
-                              ? "published on the site"
-                              : "from the site's address format"
+                              ? "published by the company"
+                              : "from the company's published address format"
                           }`
-                        : "no work address found"}
+                        )
+                      ) : (
+                        "no work address found"
+                      )}
                       {leader.linkedinUrl && (
                         <>
                           {" · "}

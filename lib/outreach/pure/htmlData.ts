@@ -219,3 +219,45 @@ export const companySocials = (links: SocialLink[], brand: string): SocialLink[]
   }
   return [...byPlatform.values()];
 };
+
+/* ---------------------------- hidden addresses ---------------------------- */
+
+/** Cloudflare "email protection": the address XOR-ed with the first byte. */
+const decodeCfEmail = (hex: string): string | null => {
+  if (!/^[0-9a-f]+$/i.test(hex) || hex.length < 4 || hex.length % 2 !== 0) return null;
+  const key = Number.parseInt(hex.slice(0, 2), 16);
+  let out = "";
+  for (let i = 2; i < hex.length; i += 2) {
+    out += String.fromCharCode(Number.parseInt(hex.slice(i, i + 2), 16) ^ key);
+  }
+  return /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(out) ? out.toLowerCase() : null;
+};
+
+/**
+ * Addresses a site hides from bots but shows to people: Cloudflare-protected
+ * addresses and "matti.meikalainen(at)example.fi" / "[at]" / "(dot)" forms.
+ * Plain " at " is not accepted ("contact us at example.fi" is prose).
+ */
+export const hiddenEmails = (html: string): string[] => {
+  const found = new Set<string>();
+  for (const match of html.matchAll(/data-cfemail=["']([0-9a-f]+)["']/gi)) {
+    const address = decodeCfEmail(match[1] ?? "");
+    if (address) found.add(address);
+  }
+  for (const match of html.matchAll(/\/cdn-cgi\/l\/email-protection#([0-9a-f]+)/gi)) {
+    const address = decodeCfEmail(match[1] ?? "");
+    if (address) found.add(address);
+  }
+  const text = decode(html.replace(/<[^>]+>/g, " "));
+  const AT = String.raw`\s*(?:\(at\)|\[at\]|\{at\}|\(ät\)|\[ät\]|\(a\))\s*`;
+  const DOT = String.raw`(?:\.|\s*\(dot\)\s*|\s*\[dot\]\s*|\s*\(piste\)\s*)`;
+  const pattern = new RegExp(
+    String.raw`([a-z0-9._%+-]+)${AT}([a-z0-9-]+(?:${DOT}[a-z0-9-]+)*${DOT}[a-z]{2,})`,
+    "gi",
+  );
+  for (const match of text.matchAll(pattern)) {
+    const domain = (match[2] ?? "").replace(/\s*[([](dot|piste)[)\]]\s*/gi, ".");
+    found.add(`${match[1]}@${domain}`.toLowerCase());
+  }
+  return [...found];
+};

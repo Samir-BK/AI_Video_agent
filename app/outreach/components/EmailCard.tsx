@@ -107,6 +107,11 @@ export default function EmailCard({ email, status, views, adminSecret, onStatus 
       <p className="text-xs text-velho-muted">
         {email.theme}
         {email.recipient.email && <span className="ml-2 text-zinc-400">→ {email.recipient.email}</span>}
+        {email.recipient.emailMethod === "guessed" && (
+          <span className="ml-2 rounded-full bg-amber-500/15 px-1.5 text-amber-300">
+            guessed address — unverified, may bounce
+          </span>
+        )}
       </p>
       {email.mergedRoles.length > 0 && (
         <p className="text-xs text-amber-200/80">

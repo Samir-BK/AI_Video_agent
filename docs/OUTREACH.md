@@ -93,8 +93,18 @@ Specific functions are checked before the generic ones, so "Supply Chain
 Director" is not swallowed by COO's "operations". Deputies are ignored.
 
 ### Contact details per person — work information only
-- **Work email**: published on the company site, or built from the site's own
-  address format when its mail domain has MX records (unchanged rule).
+- **Work email**, in order of trust:
+  1. *Published*: the person's own address on the company's pages or on
+     press releases found by web search ("Lisätietoja: … @…"). Addresses
+     hidden from bots (Cloudflare protection, `name(at)example.fi`) count.
+  2. *Company format*: the format the company publishes — other people's
+     addresses or a notice such as `etunimi.sukunimi@lassila-tikanoja.fi` —
+     applied to the name, when that mail domain has MX records. The mail
+     domain may differ from the website (lt.fi → lassila-tikanoja.fi).
+  3. *Guessed*: nothing published anywhere → `firstname.lastname@` on a domain
+     with MX records, shown in amber as "guessed — unverified" (may bounce).
+     Mail servers are never probed.
+  Personal addresses (Gmail etc.) are not looked up.
 - **LinkedIn**, three levels:
   1. *Verified*: a profile the company's own website links next to the name.
   2. *Search on LinkedIn* button: opens LinkedIn's people search for
@@ -163,7 +173,7 @@ templates, and labels what fell back.
 npm ci
 npm run dev                              # then open http://localhost:3000/outreach
 npm run typecheck
-node --test tests/outreach/*.test.mjs    # 61 unit tests, no extra dependencies
+node --test tests/outreach/*.test.mjs    # 66 unit tests, no extra dependencies
 ```
 
 Stored results, views and opt-outs live in memory and in
@@ -288,10 +298,13 @@ The default store is per machine — see `docs/OUTREACH_INTEGRATION.md` §5.
   by the brand when the website's domain is one of the legal name's words
   (fazer.com → ads posted as "Fazer"). A brand query can also match an
   unrelated company that starts with the same word.
-- **Without an LLM key, only job ads count as substantive facts**, so a company
-  with no open ads is `insufficient` even when its management team is found
-  (e.g. lt.fi finds 5 leaders but writes nothing). With a key, goals, news and
-  financials fill this gap.
+- **Without an LLM key**, keyword rules pick goal, financial and change
+  sentences from the fetched pages (`pure/ruleFacts.ts`); each quote is the
+  sentence itself, so it verifies. These sentences are not translated, so an
+  English email quotes a Finnish sentence verbatim. A model key
+  (`GROQ_API_KEY` or `OPENAI_API_KEY`) gives better facts and wording.
+- On pages outside the company's site (web search), a leader counts only when
+  the company name appears within 200 characters of the title.
 - Sites rendered in the browser (e.g. fazer.com) are read through their meta
   tags, JSON-LD and framework data plus the sitemap; text that only appears
   after JavaScript runs is still missed. Groups whose management sits on a

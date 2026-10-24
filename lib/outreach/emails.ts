@@ -157,6 +157,13 @@ const lowerFirst = (value: string): string =>
 
 const stripDot = (value: string): string => value.trim().replace(/[.!]+$/, "");
 
+/**
+ * The fact as a clause. A keyword-rule fact is the source sentence itself
+ * (text === quote, possibly Finnish), so it is quoted verbatim, not reworded.
+ */
+const claimOf = (fact: SourcedFact): string =>
+  fact.text === fact.quote ? `“${stripDot(fact.quote)}”` : lowerFirst(stripDot(fact.text));
+
 /** Open-position title from a hiring fact ("Open position: X" -> "X"). */
 const positionOf = (fact: SourcedFact): string =>
   stripDot(fact.text.replace(/^open position:\s*/i, ""));
@@ -172,7 +179,7 @@ const openingSentence = (
     if (fact.kind === "hiring") {
       return `Huomasimme, että haette parhaillaan tehtävään "${positionOf(fact)}".`;
     }
-    return `Julkisista lähteistä nousi esiin yksi asia: ${lowerFirst(stripDot(fact.text))}.`;
+    return `Julkisista lähteistä nousi esiin yksi asia: ${claimOf(fact)}.`;
   }
   if (!fact) {
     return `We looked at ${companyName}'s public material and the way work flows through the business.`;
@@ -181,11 +188,11 @@ const openingSentence = (
     case "hiring":
       return `I noticed ${companyName} is currently hiring for "${positionOf(fact)}".`;
     case "strategy_goal":
-      return `${companyName} has set a clear goal: ${lowerFirst(stripDot(fact.text))}.`;
+      return `${companyName} has set a clear goal: ${claimOf(fact)}.`;
     case "why_now":
-      return `I saw a recent change at ${companyName}: ${lowerFirst(stripDot(fact.text))}.`;
+      return `I saw a recent change at ${companyName}: ${claimOf(fact)}.`;
     default:
-      return `Reading ${companyName}'s public material, one point stood out: ${lowerFirst(stripDot(fact.text))}.`;
+      return `Reading ${companyName}'s public material, one point stood out: ${claimOf(fact)}.`;
   }
 };
 
@@ -261,7 +268,7 @@ const templateEmail = (
     ? `Manual work like this is often what slows growth plans down.`
     : second.kind === "hiring"
       ? `You are also hiring for "${positionOf(second)}", so the workload is clearly growing.`
-      : `That sits next to another signal: ${lowerFirst(stripDot(second.text))}.`;
+      : `That sits next to another signal: ${claimOf(second)}.`;
 
   const angle: Record<ExecRole, string> = {
     CEO: secondSignal,
@@ -423,6 +430,7 @@ export const writeRoleEmails = async (ctx: EmailContext): Promise<EmailWriteResu
         name: leader?.name ?? null,
         title: leader?.title || ROLE_LABELS[role],
         email: leader?.email.address ?? null,
+        emailMethod: leader?.email.method,
       },
       theme: ROLE_THEMES[ctx.language][role],
       subject: content.subject,

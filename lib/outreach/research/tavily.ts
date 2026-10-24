@@ -14,6 +14,7 @@ import type { FetchedPage, LeaderProfile, ResearchLogEntry } from "@/types/outre
 const ENDPOINT = "https://api.tavily.com/search";
 const TIMEOUT_MS = 5500;
 const MAX_RESULTS = 4;
+const EMAIL_IN_TEXT = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
 
 interface TavilyResult {
   url?: string;
@@ -75,6 +76,9 @@ export const tavilySource: ResearchSource = {
     const queries = [
       `"${company}" toimitusjohtaja talousjohtaja johtoryhmä`,
       `"${company}" strategia tavoite kasvu investointi`,
+      // Press releases end with "Lisätietoja: name, title, etunimi.sukunimi@...",
+      // which shows the company's personal address format.
+      `"${company}" lisätietoja sähköposti toimitusjohtaja`,
     ];
     const results = (await Promise.all(queries.map((query) => search(query, apiKey)))).flat();
 
@@ -91,7 +95,8 @@ export const tavilySource: ResearchSource = {
         url: result.url,
         title: result.title ?? "",
         text: text.slice(0, 200_000),
-        emails: [],
+        // Addresses in the text; contacts keeps only the company's own domains.
+        emails: [...new Set((text.match(EMAIL_IN_TEXT) ?? []).map((address) => address.toLowerCase()))].slice(0, 50),
         links: [],
         socialLinks: [],
       });

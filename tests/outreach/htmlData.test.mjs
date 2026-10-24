@@ -104,3 +104,21 @@ test("companySocials keeps one account per platform, preferring the brand", asyn
     ["https://www.instagram.com/fazersuomi", "https://www.facebook.com/fazersuomi"],
   );
 });
+
+test("hiddenEmails decodes Cloudflare protection and (at) forms", async () => {
+  const { hiddenEmails } = await import("../../lib/outreach/pure/htmlData.ts");
+  // "a.b@c.fi" XOR 0x42.
+  const key = 0x42;
+  const hex =
+    key.toString(16) +
+    [..."a.b@c.fi"].map((ch) => (ch.charCodeAt(0) ^ key).toString(16).padStart(2, "0")).join("");
+  const html = `<a class="__cf_email__" data-cfemail="${hex}">[email protected]</a>
+    <p>Matti Meikäläinen, matti.meikalainen(at)example.fi</p>
+    <p>Liisa: liisa.virtanen [at] example (dot) fi</p>
+    <p>Contact us at example.fi for more.</p>`;
+  const found = hiddenEmails(html);
+  assert.ok(found.includes("a.b@c.fi"));
+  assert.ok(found.includes("matti.meikalainen@example.fi"));
+  assert.ok(found.includes("liisa.virtanen@example.fi"));
+  assert.ok(!found.some((address) => address.startsWith("us@")));
+});

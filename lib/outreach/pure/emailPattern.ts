@@ -5,7 +5,10 @@
  *   1. "published" — an address on the company's own site matches the person.
  *   2. "pattern"   — the site publishes other people's addresses in a clear
  *                    firstname.lastname@ format; we apply it to the leader.
- *   3. "none"      — no address. We never invent one without a known pattern.
+ *   3. "guessed"   — no format published anywhere: firstname.lastname@ (the
+ *                    most common Finnish format) on a domain with MX records.
+ *                    Low confidence, always shown as unverified.
+ *   4. "none"      — no address.
  *
  * Pure module (type-only imports) so it runs under `node --test`.
  */
@@ -117,6 +120,8 @@ export const resolveLeaderEmail = (
   fullName: string | null,
   siteAddresses: string[],
   mxOk: (domain: string) => boolean,
+  /** Mail domain for a last-resort first.last@ guess (already MX-checked), or null. */
+  guessDomain: string | null = null,
 ): LeaderEmail => {
   const none: LeaderEmail = { address: null, method: "none", confidence: "low" };
   if (!fullName) return none;
@@ -138,6 +143,12 @@ export const resolveLeaderEmail = (
       const confidence: Confidence = "medium";
       return { address: `${local}@${detected.domain}`, method: "pattern", confidence };
     }
+  }
+
+  // 3. No format published: the most common Finnish format, labelled a guess.
+  if (guessDomain) {
+    const local = buildLocalPart(fullName, "first.last");
+    if (local) return { address: `${local}@${guessDomain}`, method: "guessed", confidence: "low" };
   }
 
   return none;

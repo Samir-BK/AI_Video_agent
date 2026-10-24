@@ -2,6 +2,7 @@ import "server-only";
 
 import { callLlm, extractJson, isLlmConfigured } from "@/lib/llm";
 import { mapTitleToRole, ROLE_KEYWORDS } from "@/lib/outreach/pure/roles";
+import { coreName, foldText } from "@/lib/outreach/pure/searchText";
 import {
   dedupeFacts,
   normalizeForMatch,
@@ -181,7 +182,16 @@ const NOT_NAME_WORDS = new Set([
   "team", "management", "leadership", "contact", "contacts", "yhteystiedot", "johtoryhmä",
   "hallitus", "toimitusjohtaja", "talousjohtaja", "johtaja", "oy", "oyj", "ab", "ltd",
   "finland", "suomi", "customer", "service", "read", "more", "lue", "lisää",
+  "pohjoismaat", "nordic", "nordics", "europe", "eurooppa", "skandinavia", "baltia", "koneenrakennus",
 ]);
+
+const hostOfUrl = (url: string): string => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+};
 
 const looksLikePersonName = (name: string): boolean =>
   name
@@ -206,15 +216,30 @@ const keywordIndexes = (text: string, keyword: string): number[] => {
  * Key-free fallback: find "Toimitusjohtaja Matti Meikäläinen" or
  * "Matti Meikäläinen, CEO" on leadership-like pages.
  */
-export const heuristicLeaders = (pages: FetchedPage[]): LeaderProfile[] => {
+export const heuristicLeaders = (
+  pages: FetchedPage[],
+  /** Company website host; pages elsewhere must name the company near the title. */
+  ownHost = "",
+  companyName = "",
+): LeaderProfile[] => {
   const found: LeaderProfile[] = [];
   const retrievedAt = nowIso();
   const candidates = pages.filter((page) => priorityOf(page.url) <= 3);
+  const host = ownHost.replace(/^www\./, "").toLowerCase();
+  const core = coreName(companyName);
 
   for (const page of candidates) {
+    // A news or directory page lists people from many companies: there, the
+    // company name must appear within 200 characters of the title.
+    const pageHost = hostOfUrl(page.url);
+    const offSite = host !== "" && pageHost !== host && !pageHost.endsWith(`.${host}`);
     for (const role of EXEC_ROLES) {
       for (const keyword of ROLE_KEYWORDS[role]) {
         for (const index of keywordIndexes(page.text, keyword)) {
+          if (offSite) {
+            const near = page.text.slice(Math.max(0, index - 200), index + keyword.length + 200);
+            if (core.length < 3 || !foldText(near).includes(core)) continue;
+          }
           const start = Math.max(0, index - 60);
           const end = Math.min(page.text.length, index + keyword.length + 60);
           const windowText = page.text.slice(start, end);
@@ -265,9 +290,10 @@ export const heuristicLeaders = (pages: FetchedPage[]): LeaderProfile[] => {
 export const extractFactsAndLeaders = async (
   companyName: string,
   pages: FetchedPage[],
+  ownHost = "",
 ): Promise<ExtractionResult> => {
   const sourceTexts = new Map(pages.map((page) => [page.url, page.text]));
-  const fallbackLeaders = pickLeaders(heuristicLeaders(pages));
+  const fallbackLeaders = pickLeaders(heuristicLeaders(pages, ownHost, companyName));
 
   if (!isLlmConfigured() || pages.length === 0) {
     return {
@@ -411,7 +437,7 @@ export const extractFactsAndLeaders = async (
   const { verified, rejected: rejectedFacts } = verifyFacts(factCandidates, sourceTexts);
   rejected += rejectedFacts.length;
 
-  const leaders = pickLeaders([...verifiedLeaders, ...heuristicLeaders(pages)]);
+  const leaders = pickLeaders([...verifiedLeaders, ...heuristicLeaders(pages, ownHost, companyName)]);
   // Leader statements become public statements of the matching leader.
   for (const fact of verified) {
     if (fact.kind !== "leader_statement") continue;
