@@ -92,6 +92,7 @@ export const toCompanySummary = (record: PrhCompanyRecord): CompanySummary | nul
     businessId,
     name: current.name,
     previousNames,
+    renamedOn: previousNames.length > 0 ? (current.registrationDate ?? null) : null,
     city: knownCity ? titleCaseCity(knownCity) : null,
     businessLineCode: record.mainBusinessLine?.type ?? null,
     businessLine: describe(record.mainBusinessLine?.descriptions),

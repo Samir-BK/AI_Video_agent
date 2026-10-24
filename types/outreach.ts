@@ -289,6 +289,8 @@ export interface CompanySummary {
   name: string;
   /** Earlier official names, newest first. */
   previousNames: string[];
+  /** Date the current name was registered, when the company has older names. */
+  renamedOn: string | null;
   city: string | null;
   businessLineCode: string | null;
   businessLine: string | null;
@@ -339,3 +341,82 @@ export interface DomainResolution {
   checks: DomainCheck[];
   durationMs: number;
 }
+
+/* ---------------------------- Criteria search ---------------------------- */
+
+export interface CriteriaRequest {
+  /** Industry group ids (see INDUSTRY_GROUPS) and/or raw TOL codes (3–5 digits). */
+  industries: string[];
+  /** Region id (see REGIONS) — expands to its main towns. */
+  region?: string;
+  /** Extra / alternative towns typed by the operator. */
+  cities?: string[];
+  /** Minimum company age in years (default 10). */
+  minAgeYears?: number;
+  /** M3: only keep companies with an open manual-work job ad. */
+  requireHiring?: boolean;
+  /** M3: only keep companies whose size is known from a sourced quote. */
+  onlyKnownSize?: boolean;
+}
+
+export interface ScoreReason {
+  points: number;
+  reason: string;
+}
+
+export interface ScoredCompany {
+  company: CompanySummary;
+  /** 0–100, deterministic for the same input. */
+  score: number;
+  reasons: ScoreReason[];
+  ageYears: number | null;
+  /** Filled by enrichment (M3). */
+  enrichment?: CompanyEnrichment;
+}
+
+export interface CompanyEnrichment {
+  domain: DomainResolution | null;
+  hiring: SourcedFact[];
+  /** Employee count stated on the site or in a job ad, with its quote. */
+  size: { employees: number; fact: SourcedFact } | null;
+  status: "pending" | "done" | "timed_out";
+}
+
+export interface ExclusionCount {
+  id: string;
+  label: string;
+  count: number;
+}
+
+export interface CriteriaSearchLogEntry {
+  query: string;
+  ok: boolean;
+  results: number;
+  durationMs: number;
+  note?: string;
+}
+
+export interface CriteriaResult {
+  request: CriteriaRequest;
+  /** Ranked, after exclusions. */
+  companies: ScoredCompany[];
+  scanned: number;
+  excluded: ExclusionCount[];
+  /** True when a limit stopped the scan before all combinations. */
+  truncated: boolean;
+  /** Which limit: the candidate cap or the register-query budget. */
+  truncatedBy?: "candidates" | "queries";
+  queriesRun: number;
+  queriesPlanned: number;
+  log: CriteriaSearchLogEntry[];
+  createdAt: string;
+  durationMs: number;
+  /** Set when the same search was served from the 30-minute cache. */
+  cached?: boolean;
+}
+
+export type CriteriaStreamEvent =
+  | { type: "progress"; message: string; done: number; total: number }
+  | { type: "result"; result: CriteriaResult }
+  | { type: "enriched"; businessId: string; scored: ScoredCompany }
+  | { type: "error"; message: string };
