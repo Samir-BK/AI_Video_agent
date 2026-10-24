@@ -6,6 +6,7 @@ import {
   Captions,
   CaptionsOff,
   CalendarClock,
+  Gauge,
   Mic,
   Pause,
   Play,
@@ -19,6 +20,7 @@ import CartoonAnimator, {
 } from "@/app/components/CartoonAnimator";
 import { VideoAudioEngine, type AudioBedPhase } from "@/lib/audioEngine";
 import { buildBookingUrl } from "@/lib/booking";
+import { CARTOON_TIMELINE } from "@/lib/cartoonPresets";
 import { NarrationTrack } from "@/lib/narration";
 import type { TimedCue } from "@/lib/voiceoverBudget";
 import type {
@@ -42,6 +44,12 @@ interface VideoPlayerProps {
 /** How often React state syncs with the animation clock (ms). */
 const UI_SYNC_INTERVAL_MS = 60;
 
+const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
+type PlaybackSpeed = (typeof PLAYBACK_SPEEDS)[number];
+
+const speedLabel = (speed: PlaybackSpeed): string =>
+  speed === 1 ? "1×" : `${speed}×`;
+
 const DEFAULT_PALETTE: BrandPalette = {
   primary: "#38BDF8",
   secondary: "#0369A1",
@@ -62,18 +70,22 @@ const PROVIDER_LABELS: Record<VoiceoverProvider, string> = {
  * the storyboard never desyncs the visuals from the script.
  */
 const phaseForSecond = (second: number, scenes: VideoScene[]): CartoonPhase => {
+  if (second >= CARTOON_TIMELINE.bookingStart - 0.01) return "booking";
   const scene = scenes.find(
     (candidate) => second >= candidate.startSec && second < candidate.endSec,
   );
-  if (!scene) return "solution";
+  if (!scene) return second >= CARTOON_TIMELINE.bookingStart ? "booking" : "solution";
   if (scene.id <= 1) return "intro";
-  return scene.id === 2 ? "problem" : "solution";
+  if (scene.id === 2) return "problem";
+  if (scene.id >= 4) return "booking";
+  return "solution";
 };
 
 /** Short role label for the current beat — the lower-third kicker. */
 const sceneKickerLabel = (phase: CartoonPhase): string => {
   if (phase === "intro") return "Company Snapshot";
   if (phase === "problem") return "The Bottleneck";
+  if (phase === "booking") return "Book a Meeting";
   return "The Velho Fix";
 };
 
@@ -148,6 +160,9 @@ export default function VideoPlayer({
   const [hasEnded, setHasEnded] = useState(false);
   const [audioUnsupported, setAudioUnsupported] = useState(false);
   const [audioActive, setAudioActive] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1);
+  const speedRef = useRef<PlaybackSpeed>(1);
+  speedRef.current = playbackSpeed;
 
   const engineRef = useRef<VideoAudioEngine | null>(null);
   /** Last phase we fired a transition sting for, so we only fire on change. */
@@ -257,6 +272,7 @@ export default function VideoPlayer({
       },
     });
     narrationRef.current = track;
+    track.setPlaybackSpeed(speedRef.current);
     setSyncedCues(new Map());
 
     // One clip per scene, scene 1 first, so play isn't waiting on later beats.
@@ -293,7 +309,7 @@ export default function VideoPlayer({
     startRef.current = performance.now();
 
     const loop = (now: number) => {
-      const ms = offsetRef.current + (now - startRef.current);
+      const ms = offsetRef.current + (now - startRef.current) * speedRef.current;
       const list = scenesRef.current;
 
       if (ms >= durationMs) {
@@ -354,6 +370,7 @@ export default function VideoPlayer({
 
     if (phase === "problem") engine.playProblemSting();
     else if (phase === "solution") engine.playSuccessChime();
+    else if (phase === "booking") engine.playSuccessChime();
   }, [isPlaying, phase]);
 
   /* ---------------- Controls ---------------- */
@@ -385,7 +402,8 @@ export default function VideoPlayer({
   const handlePlayPause = useCallback(() => {
     if (isPlaying && !hasEnded) {
       offsetRef.current =
-        offsetRef.current + (performance.now() - startRef.current);
+        offsetRef.current +
+        (performance.now() - startRef.current) * speedRef.current;
       stopSpeech();
       engineRef.current?.stop();
       setAudioActive(false);
@@ -448,6 +466,18 @@ export default function VideoPlayer({
     [durationMs, isPlaying, scenes, startVoice, stopSpeech],
   );
 
+  const handlePlaybackSpeed = useCallback((next: PlaybackSpeed) => {
+    if (isPlaying) {
+      offsetRef.current =
+        offsetRef.current +
+        (performance.now() - startRef.current) * speedRef.current;
+      startRef.current = performance.now();
+    }
+    speedRef.current = next;
+    setPlaybackSpeed(next);
+    narrationRef.current?.setPlaybackSpeed(next);
+  }, [isPlaying]);
+
   const toggleMute = useCallback(() => {
     setIsMuted((prev) => {
       const next = !prev;
@@ -471,6 +501,7 @@ export default function VideoPlayer({
   const sceneChipLabel = (sceneId: number): string => {
     if (sceneId === 1) return "Intro";
     if (sceneId === 2) return "Problem";
+    if (sceneId === 4) return "Book";
     return "Solution";
   };
 
@@ -480,7 +511,7 @@ export default function VideoPlayer({
    * number on screen at a time.
    */
   const bottomMeta = ((): string | null => {
-    if (phase === "intro") return null;
+    if (phase === "intro" || phase === "booking") return null;
     if (phase === "problem") {
       const impact = problem.impact;
       if (impact?.hoursLostPerWeek) return `${impact.hoursLostPerWeek} hrs/week lost`;
@@ -555,6 +586,7 @@ export default function VideoPlayer({
               palette={palette}
               elapsedSec={elapsedSec}
               paused={!isPlaying}
+              playRate={playbackSpeed}
             />
           </motion.div>
         </AnimatePresence>
@@ -615,7 +647,9 @@ export default function VideoPlayer({
                           ? "#F43F5E"
                           : phase === "solution"
                             ? "#10B981"
-                            : palette.accent,
+                            : phase === "booking"
+                              ? "#6EE7B7"
+                              : palette.accent,
                     }}
                   />
                   <span
@@ -624,7 +658,7 @@ export default function VideoPlayer({
                       color:
                         phase === "problem"
                           ? "#FDA4AF"
-                          : phase === "solution"
+                          : phase === "solution" || phase === "booking"
                             ? "#6EE7B7"
                             : palette.accent,
                     }}
@@ -672,27 +706,31 @@ export default function VideoPlayer({
               ) : null}
             </div>
 
-            {/* Meeting CTA — only once the Velho solution has landed */}
-            {phase === "solution" ? (
-              <motion.a
-                href={bookingHref}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(event) => event.stopPropagation()}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: 0.75 }}
-                className="pointer-events-auto mt-2.5 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[11px] font-bold text-zinc-900 shadow-lg transition-transform hover:scale-[1.03]"
-                style={{
-                  background: `linear-gradient(135deg, ${palette.accent}, #6EE7B7)`,
-                  boxShadow: `0 8px 26px -8px ${palette.accent}aa`,
-                }}
-              >
-                <CalendarClock className="h-3.5 w-3.5" strokeWidth={2.5} />
-                Book your 15-minute walkthrough — one click
-              </motion.a>
-            ) : null}
           </motion.div>
+        </AnimatePresence>
+
+        {/* One-click meeting — last beat of the video, stays up after replay. */}
+        <AnimatePresence>
+          {(phase === "booking" || hasEnded) && (
+            <motion.a
+              href={bookingHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(event) => event.stopPropagation()}
+              initial={{ opacity: 0, y: 16, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10 }}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+              className="pointer-events-auto absolute bottom-[18%] left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full px-5 py-2.5 text-[13px] font-bold text-zinc-900 shadow-xl transition-transform hover:scale-[1.04]"
+              style={{
+                background: `linear-gradient(135deg, ${palette.accent}, #6EE7B7)`,
+                boxShadow: `0 12px 32px -10px ${palette.accent}cc`,
+              }}
+            >
+              <CalendarClock className="h-4 w-4" strokeWidth={2.5} />
+              Book meeting — one click
+            </motion.a>
+          )}
         </AnimatePresence>
 
         {/* Idle play affordance */}
@@ -863,6 +901,39 @@ export default function VideoPlayer({
                 </span>
               </button>
             ))}
+          </div>
+        </div>
+
+        {/* Playback speed — same clock as picture, captions, and voice. */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-velho-line pt-2.5">
+          <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+            <Gauge className="h-3 w-3" strokeWidth={2} />
+            <span className="font-medium uppercase tracking-wider">Speed</span>
+          </div>
+          <div
+            className="flex items-center gap-0.5 rounded-lg bg-white/[0.04] p-0.5"
+            role="radiogroup"
+            aria-label="Playback speed"
+          >
+            {PLAYBACK_SPEEDS.map((speed) => {
+              const active = playbackSpeed === speed;
+              return (
+                <button
+                  key={speed}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => handlePlaybackSpeed(speed)}
+                  className={`min-w-[2.4rem] rounded-md px-1.5 py-1 font-mono text-[11px] transition-colors ${
+                    active
+                      ? "bg-white/[0.12] text-zinc-100"
+                      : "text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-300"
+                  }`}
+                >
+                  {speedLabel(speed)}
+                </button>
+              );
+            })}
           </div>
         </div>
 

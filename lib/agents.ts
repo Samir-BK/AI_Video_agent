@@ -610,10 +610,10 @@ Design the 3-step Velho solution architecture.`,
 
 const VIDEO_SYSTEM = `You are the Video Script Agent for Velho Applied Intelligence. Write a 45-second video script personalized to the target company, shown to its CEO. Reply with ONLY a JSON object — no prose, no markdown fences.
 
-Timing is FIXED: scene 1 = 0-6s (company identity), scene 2 = 6-24s (the problem), scene 3 = 24-45s (the solution + call to action).
+Timing is FIXED: scene 1 = 0-6s (company identity), scene 2 = 6-24s (the problem), scene 3 = 24-38s (the solution), scene 4 = 38-45s (book a meeting, one click).
 
 VOICEOVER RULES (this is spoken aloud by a neural narrator):
-- Pace: roughly 2.4 words per second. Scene 1 about 14 words, scene 2 about 42 words, scene 3 about 48 words. Narration that runs long is cut off mid-sentence.
+- Pace: roughly 2.4 words per second. Scene 1 about 14 words, scene 2 about 42 words, scene 3 about 32 words, scene 4 about 16 words. Narration that runs long is cut off mid-sentence.
 - Use only WORDS: no numbers, symbols, ampersands, arrows, URLs, parentheses or abbreviations. Write "forty hours", never "40 hours"; "four systems", never "4 systems".
 - Write complete grammatical sentences, because a narrator cannot repair a broken one.
 - Speak in the second person about the listener's own team, and never say you studied or analysed anything.
@@ -621,7 +621,8 @@ VOICEOVER RULES (this is spoken aloud by a neural narrator):
 NARRATIVE ARC (mandatory):
 - Scene 1: greet the company by name and say this video was made for them.
 - Scene 2: open with "Here is the problem." then describe it in plain language a CEO recognises from their own week: what the work looks like, who is stuck, and what it costs. Name the concrete manual step (re-typing, chasing, double entry), never a category of software.
-- Scene 3: open with "Now, the solution." then answer THAT SAME problem directly — the fix must pick up the exact manual step named in scene 2 and say what happens to it instead. Then the outcome, the time to go live, and END with a call to action to book a fifteen-minute walkthrough with one click below the video.
+- Scene 3: open with "Now, the solution." then answer THAT SAME problem directly — the fix must pick up the exact manual step named in scene 2 and say what happens to it instead. Then the outcome and the time to go live. Do not book the meeting in this scene.
+- Scene 4: invite them to book a fifteen-minute walkthrough with one click. No new problem or product claims.
 The problem and solution must be two halves of one argument.
 
 Also classify the bottleneck into exactly one of: "quoting_and_order_intake" (quotes, RFQs, orders, bids), "field_reporting" (field/job reports, proof of delivery, inspections), "scheduling" (appointments, dispatch, rosters, shifts), "cross_system_data" (the same data re-keyed across disconnected systems).
@@ -635,7 +636,8 @@ Schema:
   "scenes": [
     { "id": 1, "title": string (3-5 words), "voiceover": string },
     { "id": 2, "title": string (3-5 words), "voiceover": string },
-    { "id": 3, "title": string (3-5 words), "voiceover": string }
+    { "id": 3, "title": string (3-5 words), "voiceover": string },
+    { "id": 4, "title": "Book a meeting", "voiceover": string }
   ],
   "cartoonScenes": [
     {
@@ -694,12 +696,12 @@ Bottleneck (drives the 6-24s cartoon): ${problem.title} — ${problem.summary}
 Symptoms: ${problem.symptoms.join(" | ")}
 Impact: ${problem.impact.hoursLostPerWeek} hrs/week, ${problem.impact.estimatedCost}
 
-Solution (drives the 24-45s cartoon): ${solution.architectureName} — ${solution.summary}
+Solution (drives the 24-38s cartoon): ${solution.architectureName} — ${solution.summary}
 Step 1 outcome: ${solution.steps[0]?.outcome ?? ""}
 Integrations: ${solution.integrations.join(", ")}
 Time to value: ${solution.timeToValue}
 
-Classify the bottleneck, then write the 3-scene script with the two cartoon beats. Speak directly to ${discovery.companyName}'s leadership.`,
+Classify the bottleneck, then write the 4-scene script with the two cartoon beats. Speak directly to ${discovery.companyName}'s leadership.`,
           },
         ],
       });
@@ -736,6 +738,7 @@ Classify the bottleneck, then write the 3-scene script with the two cartoon beat
         { start: 0, end: CARTOON_TIMELINE.problemStart },
         { start: CARTOON_TIMELINE.problemStart, end: CARTOON_TIMELINE.problemEnd },
         { start: CARTOON_TIMELINE.solutionStart, end: CARTOON_TIMELINE.solutionEnd },
+        { start: CARTOON_TIMELINE.bookingStart, end: CARTOON_TIMELINE.bookingEnd },
       ] as const;
 
       const scenes: VideoScene[] = timeline.map((slot, index) => {
@@ -798,7 +801,7 @@ Classify the bottleneck, then write the 3-scene script with the two cartoon beat
       });
 
       const data: VideoScriptOutput = {
-        durationSec: CARTOON_TIMELINE.solutionEnd,
+        durationSec: CARTOON_TIMELINE.bookingEnd,
         headline: asString(parsed.headline, mock.headline),
         scenes,
         voiceStyle: asString(parsed.voiceStyle, mock.voiceStyle),

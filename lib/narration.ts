@@ -114,6 +114,7 @@ export class NarrationTrack {
   private wasPlaying = false;
   private lastVideoSec: number | null = null;
   private lastKick = 0;
+  private clockRate = 1;
   private retries = new Map<number, number>();
   private controllers = new Set<AbortController>();
 
@@ -133,6 +134,11 @@ export class NarrationTrack {
     this.wasPlaying = true;
     this.lastVideoSec = atSec;
     this.follow(atSec, scene, true);
+  }
+
+  /** Video clock rate (0.5–2). follow() applies it to the clip already playing. */
+  setPlaybackSpeed(speed: number): void {
+    this.clockRate = Number.isFinite(speed) && speed > 0 ? speed : 1;
   }
 
   get activeProvider(): VoiceoverProvider | null {
@@ -174,10 +180,10 @@ export class NarrationTrack {
         this.cancelBrowser();
         this.browserSceneId = -1;
       }
-      const rate = narrationPlaybackRate(clip.duration, span);
-      // Same mapping as the captions: scene-local seconds * rate = file time.
-      const expected = Math.min(Math.max(0, clip.duration - 0.04), local * rate);
-      this.playNeural(scene.id, clip, rate, expected);
+      const fit = narrationPlaybackRate(clip.duration, span);
+      // Same mapping as the captions: scene-local seconds * fit = file time.
+      const expected = Math.min(Math.max(0, clip.duration - 0.04), local * fit);
+      this.playNeural(scene.id, clip, fit * this.clockRate, expected);
       return;
     }
 
@@ -199,7 +205,7 @@ export class NarrationTrack {
     if (!text) return;
     const remaining = Math.max(0.4, span - local);
     const estimated = countSpokenWords(text) / BROWSER_WORDS_PER_SEC;
-    const rate = Math.min(1.4, Math.max(0.75, estimated / remaining));
+    const rate = Math.min(1.8, Math.max(0.6, (estimated / remaining) * this.clockRate));
     this.speakBrowser(text, rate);
   }
 
