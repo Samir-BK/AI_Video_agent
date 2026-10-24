@@ -18,7 +18,7 @@ import { legalNamesFromText, resolveEntity } from "@/lib/outreach/research/entit
 import { extractFactsAndLeaders } from "@/lib/outreach/research/extract";
 import { jobAdsSource } from "@/lib/outreach/research/jobAds";
 import { runSource, type ResearchContext } from "@/lib/outreach/research/source";
-import { tavilySource } from "@/lib/outreach/research/tavily";
+import { suggestLinkedinProfiles, tavilySource } from "@/lib/outreach/research/tavily";
 import { websiteSource } from "@/lib/outreach/research/website";
 import { getOutreachStore } from "@/lib/outreach/store";
 import { normalizeOrigin, scrapeDomain } from "@/lib/scraper";
@@ -173,9 +173,19 @@ export const runOutreach = async (
 
   // Work addresses from the company's own site (never invented).
   const contacts = await assignLeaderEmails(extraction.leaders, website.pages, domain);
-  const leaders = contacts.leaders;
   log.push(contacts.log);
   emit("extract", contacts.log.note);
+
+  // Unverified LinkedIn suggestions, only with TAVILY_API_KEY (URL only).
+  const linkedin = await suggestLinkedinProfiles(contacts.leaders, [
+    companyName,
+    domain.replace(/^www\./, "").split(".")[0] ?? "",
+  ]);
+  const leaders = linkedin.leaders;
+  if (linkedin.log) {
+    log.push(linkedin.log);
+    emit("extract", linkedin.log.note);
+  }
 
   const ceo = leaders.find((leader) => leader.role === "CEO");
   const sufficiency = assessSufficiency(facts, Boolean(ceo?.name));

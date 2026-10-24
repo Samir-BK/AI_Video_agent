@@ -95,8 +95,15 @@ Director" is not swallowed by COO's "operations". Deputies are ignored.
 ### Contact details per person — work information only
 - **Work email**: published on the company site, or built from the site's own
   address format when its mail domain has MX records (unchanged rule).
-- **LinkedIn**: only a profile the company's own website links next to the
-  person's name. Nothing is searched elsewhere.
+- **LinkedIn**, three levels:
+  1. *Verified*: a profile the company's own website links next to the name.
+  2. *Search on LinkedIn* button: opens LinkedIn's people search for
+     "name + company" in a new tab; the operator picks the right person.
+  3. *Unverified suggestion* (only with `TAVILY_API_KEY`): one web search per
+     named leader, LinkedIn results only. Accepted when the result title holds
+     the full name and the title or snippet names the company. Shown in amber
+     as "unverified — check before use". LinkedIn itself is never fetched and
+     only the URL is kept. Costs about one Tavily credit per named leader.
 - **Official company accounts** (Instagram, Facebook, LinkedIn, X, YouTube,
   TikTok) as linked from the company site, one per platform.
 - Personal social-media accounts are **not** looked up (privacy, platform terms).
@@ -136,7 +143,7 @@ templates, and labels what fell back.
 | Variable | Purpose | Default |
 |---|---|---|
 | `OPENAI_API_KEY` / `GROQ_API_KEY` | Extraction + emails (existing team key) | templates |
-| `TAVILY_API_KEY` | Extra web search for leadership/news | off |
+| `TAVILY_API_KEY` | Extra web search for leadership/news, and unverified LinkedIn profile suggestions | off |
 | `ASSUMED_HOURLY_COST_EUR` | Hourly cost in the estimate (always shown as an assumption) | `40` |
 | `OUTREACH_SENDER_NAME` | Real Velho person in the signature | `[Sender name], Velho` |
 | `OUTREACH_SENDER_EMAIL` | From address (an outreach subdomain in production) | placeholder |
@@ -156,7 +163,7 @@ templates, and labels what fell back.
 npm ci
 npm run dev                              # then open http://localhost:3000/outreach
 npm run typecheck
-node --test tests/outreach/*.test.mjs    # 57 unit tests, no extra dependencies
+node --test tests/outreach/*.test.mjs    # 61 unit tests, no extra dependencies
 ```
 
 Stored results, views and opt-outs live in memory and in

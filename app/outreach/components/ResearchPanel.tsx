@@ -4,6 +4,7 @@ import { Building2, ExternalLink, ShieldCheck, Users } from "lucide-react";
 
 import type { EntityCandidate, OutreachResult, SocialPlatform, Sufficiency } from "@/types/outreach";
 import { CORE_ROLES, ROLE_LABELS } from "@/types/outreach";
+import { linkedinSearchUrl } from "@/lib/outreach/pure/linkedin";
 
 const SOCIAL_LABELS: Record<SocialPlatform, string> = {
   instagram: "Instagram",
@@ -39,6 +40,7 @@ const hostOf = (url: string): string => {
 
 export default function ResearchPanel({ result, onPickCompany, disabled }: ResearchPanelProps) {
   const { entity, leaders, facts, sufficiency } = result;
+  const companyName = entity.candidate?.name ?? result.domain;
   const style = SUFFICIENCY_STYLE[sufficiency];
 
   return (
@@ -133,6 +135,31 @@ export default function ResearchPanel({ result, onPickCompany, disabled }: Resea
                         </>
                       )}
                     </span>
+                    <span className="ml-28 mt-0.5 flex flex-wrap items-center gap-2 text-xs">
+                      {!leader.linkedinUrl && leader.linkedinSuggestion && (
+                        <a
+                          href={leader.linkedinSuggestion}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="Found by web search: the name is in the profile title and the company in its title or snippet. People share names — check it before use."
+                          className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-300"
+                        >
+                          LinkedIn? unverified — check before use
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                      {!leader.linkedinUrl && (
+                        <a
+                          href={linkedinSearchUrl(leader.name, companyName)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 rounded-full border border-velho-line px-2 py-0.5 text-zinc-300 hover:bg-velho-ink"
+                        >
+                          Search on LinkedIn
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                    </span>
                   </>
                 ) : (
                   <span className="text-velho-muted">not found</span>
@@ -160,7 +187,7 @@ export default function ResearchPanel({ result, onPickCompany, disabled }: Resea
             ))}
           </div>
           <p className="text-xs text-velho-muted">
-            Linked from the company&apos;s own website. Personal accounts are not looked up.
+            Linked from the company&apos;s own website. Personal Instagram, Facebook and similar accounts are not looked up.
           </p>
         </div>
       )}

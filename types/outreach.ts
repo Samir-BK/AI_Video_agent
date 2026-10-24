@@ -184,6 +184,12 @@ export interface LeaderProfile {
    * out of scope (work information only).
    */
   linkedinUrl?: string | null;
+  /**
+   * UNVERIFIED LinkedIn profile from a web search (only with TAVILY_API_KEY):
+   * name in the result title and company in its title or snippet. People
+   * share names, so the operator checks it before use. URL only, no content.
+   */
+  linkedinSuggestion?: string | null;
 }
 
 export interface CompanyFinancials {
