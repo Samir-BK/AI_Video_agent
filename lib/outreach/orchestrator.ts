@@ -18,6 +18,7 @@ import { legalNamesFromText, resolveEntity } from "@/lib/outreach/research/entit
 import { extractFactsAndLeaders } from "@/lib/outreach/research/extract";
 import { jobAdsSource } from "@/lib/outreach/research/jobAds";
 import { runSource, type ResearchContext } from "@/lib/outreach/research/source";
+import { tavilySource } from "@/lib/outreach/research/tavily";
 import { websiteSource } from "@/lib/outreach/research/website";
 import { getOutreachStore } from "@/lib/outreach/store";
 import { normalizeOrigin, scrapeDomain } from "@/lib/scraper";
@@ -132,6 +133,8 @@ export const runOutreach = async (
 
   // Job ads, the rest of the legacy pipeline and fact extraction in parallel.
   const jobsPromise = runSource(jobAdsSource, context);
+  // Optional web search (only with TAVILY_API_KEY) feeds extra pages to extraction.
+  const webPromise = runSource(tavilySource, context);
   const pipelinePromise = (async () => {
     const problem = await runProblemAgent(discovery.data);
     const solution = await runSolutionAgent(discovery.data, problem.data);
@@ -139,7 +142,11 @@ export const runOutreach = async (
     return { problem, solution, videoScript };
   })();
 
-  const extractionPromise = extractFactsAndLeaders(companyName, website.pages);
+  const web = await webPromise;
+  log.push(...web.log);
+  if (web.pages.length > 0) emit("website", web.log[0]?.note ?? "Web search done");
+
+  const extractionPromise = extractFactsAndLeaders(companyName, [...website.pages, ...web.pages]);
   const jobs = await jobsPromise;
   log.push(...jobs.log);
   emit("jobs", jobs.log[0]?.note ?? "Job ads checked");
@@ -225,7 +232,13 @@ export const runOutreach = async (
       weak: sufficiency === "weak",
     });
     if (written.usedLlm) llmCalls += 1;
-    emails = written.emails;
+    // People who opted out earlier stay out, whatever channel they used.
+    const store = getOutreachStore();
+    emails = written.emails.map((email) =>
+      email.recipient.email && store.isDoNotContact(email.recipient.email)
+        ? { ...email, status: "opted_out" as const }
+        : email,
+    );
     log.push({ source: "Email writer", ok: written.usedLlm, durationMs: 0, note: written.note });
   } else {
     log.push({

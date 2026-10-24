@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ExecRole, OutreachResult } from "@/types/outreach";
+import type { ExecRole, OutreachResult, RoleEmail, RoleEmailStatus } from "@/types/outreach";
 
 /**
  * Storage for generated outreach, video views and opt-outs.
@@ -26,10 +26,17 @@ export interface OutreachStore {
   saveResult: (result: OutreachResult) => void;
   getResult: (domain: string) => OutreachResult | null;
   resolveToken: (token: string) => TokenRecord | null;
+  /** The stored email (and its result) behind a token. */
+  getEmailByToken: (token: string) => { result: OutreachResult; email: RoleEmail } | null;
+  setEmailStatus: (token: string, status: RoleEmailStatus) => void;
   recordView: (token: string) => void;
   getViews: (domain: string) => Record<ExecRole, number>;
-  addDoNotContact: (email: string) => void;
-  isDoNotContact: (email: string) => boolean;
+  /** Opt out by address, or by token when the address is unknown. */
+  addDoNotContact: (key: string) => void;
+  isDoNotContact: (key: string) => boolean;
+  /** Emails sent today (UTC) from the configured inbox. */
+  sentToday: () => number;
+  recordSend: () => void;
 }
 
 interface StoreData {
@@ -37,13 +44,25 @@ interface StoreData {
   tokens: Record<string, TokenRecord>;
   views: Record<string, number>;
   doNotContact: string[];
+  sends: Record<string, number>;
 }
 
 const FILE_DIR = join(tmpdir(), "velho-outreach");
 const FILE_PATH = join(FILE_DIR, "store.json");
 const MAX_RESULTS = 200;
 
-const emptyData = (): StoreData => ({ results: {}, tokens: {}, views: {}, doNotContact: [] });
+const emptyData = (): StoreData => ({
+  results: {},
+  tokens: {},
+  views: {},
+  doNotContact: [],
+  sends: {},
+});
+
+const todayKey = (): string => new Date().toISOString().slice(0, 10);
+
+/** Token keys are stored with a prefix so they never collide with addresses. */
+export const tokenKey = (token: string): string => `token:${token}`;
 
 const load = (): StoreData => {
   try {
@@ -93,26 +112,49 @@ const createFileStore = (): OutreachStore => {
     },
     getResult: (domain) => data.results[domain] ?? null,
     resolveToken: (token) => data.tokens[token] ?? null,
+    getEmailByToken: (token) => {
+      const record = data.tokens[token];
+      const result = record ? data.results[record.domain] : undefined;
+      const email = result?.emails.find((e) => e.token === token);
+      return result && email ? { result, email } : null;
+    },
+    setEmailStatus: (token, status) => {
+      const record = data.tokens[token];
+      const email = record
+        ? data.results[record.domain]?.emails.find((e) => e.token === token)
+        : undefined;
+      if (email) {
+        email.status = status;
+        persist(data);
+      }
+    },
+    sentToday: () => data.sends[todayKey()] ?? 0,
+    recordSend: () => {
+      const key = todayKey();
+      data.sends[key] = (data.sends[key] ?? 0) + 1;
+      persist(data);
+    },
     recordView: (token) => {
       if (!data.tokens[token]) return;
       data.views[token] = (data.views[token] ?? 0) + 1;
       persist(data);
     },
     getViews: (domain) => {
+      // Only the current generation's links count (older runs are history).
       const counts: Record<ExecRole, number> = { CEO: 0, COO: 0, CFO: 0 };
-      for (const [token, record] of Object.entries(data.tokens)) {
-        if (record.domain === domain) counts[record.role] += data.views[token] ?? 0;
+      for (const email of data.results[domain]?.emails ?? []) {
+        counts[email.role] += data.views[email.token] ?? 0;
       }
       return counts;
     },
-    addDoNotContact: (email) => {
-      const normalized = email.trim().toLowerCase();
+    addDoNotContact: (key) => {
+      const normalized = key.trim().toLowerCase();
       if (normalized && !data.doNotContact.includes(normalized)) {
         data.doNotContact.push(normalized);
         persist(data);
       }
     },
-    isDoNotContact: (email) => data.doNotContact.includes(email.trim().toLowerCase()),
+    isDoNotContact: (key) => data.doNotContact.includes(key.trim().toLowerCase()),
   };
 };
 

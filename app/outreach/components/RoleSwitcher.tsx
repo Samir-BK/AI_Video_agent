@@ -3,11 +3,15 @@
 import { useState } from "react";
 
 import EmailCard from "@/app/outreach/components/EmailCard";
-import type { ExecRole, LeaderProfile, RoleEmail } from "@/types/outreach";
+import type { ExecRole, LeaderProfile, RoleEmail, RoleEmailStatus } from "@/types/outreach";
 
 interface RoleSwitcherProps {
   emails: RoleEmail[];
   leaders: LeaderProfile[];
+  views: Record<ExecRole, number>;
+  statuses: Record<string, RoleEmailStatus>;
+  adminSecret: string;
+  onStatus: (token: string, status: RoleEmailStatus) => void;
 }
 
 const ROLES: ExecRole[] = ["CEO", "COO", "CFO"];
@@ -17,7 +21,14 @@ const ROLES: ExecRole[] = ["CEO", "COO", "CFO"];
  * leader was not found (and the angle is folded into the CEO email) or there
  * was not enough verified information to write at all.
  */
-export default function RoleSwitcher({ emails, leaders }: RoleSwitcherProps) {
+export default function RoleSwitcher({
+  emails,
+  leaders,
+  views,
+  statuses,
+  adminSecret,
+  onStatus,
+}: RoleSwitcherProps) {
   const [active, setActive] = useState<ExecRole>(emails[0]?.role ?? "CEO");
   const current = emails.find((email) => email.role === active);
   const foldedInto = emails.find((email) => email.mergedRoles.includes(active));
@@ -50,7 +61,13 @@ export default function RoleSwitcher({ emails, leaders }: RoleSwitcherProps) {
       </div>
 
       {current ? (
-        <EmailCard email={current} />
+        <EmailCard
+          email={current}
+          status={statuses[current.token] ?? current.status}
+          views={views[current.role] ?? 0}
+          adminSecret={adminSecret}
+          onStatus={onStatus}
+        />
       ) : (
         <p className="rounded-2xl border border-velho-line bg-velho-panel p-5 text-sm text-zinc-300">
           {foldedInto

@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
-import { ArrowRight, Loader2, PlayCircle, Radar } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowRight, KeyRound, Loader2, PlayCircle, Radar } from "lucide-react";
 
 import ResearchPanel from "@/app/outreach/components/ResearchPanel";
 import RoleSwitcher from "@/app/outreach/components/RoleSwitcher";
 import type {
   EntityCandidate,
+  ExecRole,
+  RoleEmailStatus,
   OutreachLanguage,
   OutreachProgressEvent,
   OutreachResult,
@@ -29,6 +31,59 @@ export default function OutreachPage() {
   const [result, setResult] = useState<OutreachResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const [views, setViews] = useState<Record<ExecRole, number>>({ CEO: 0, COO: 0, CFO: 0 });
+  const [statuses, setStatuses] = useState<Record<string, RoleEmailStatus>>({});
+  const [adminSecret, setAdminSecret] = useState("");
+
+  // The admin secret lives only in this browser tab's session.
+  useEffect(() => {
+    try {
+      setAdminSecret(sessionStorage.getItem("velho-admin-secret") ?? "");
+    } catch {
+      // Storage blocked: the operator can still type it each time.
+    }
+  }, []);
+
+  const updateSecret = (value: string) => {
+    setAdminSecret(value);
+    try {
+      sessionStorage.setItem("velho-admin-secret", value);
+    } catch {
+      // Ignore storage failures.
+    }
+  };
+
+  // Poll video views and email statuses (sent / opted out) every 10 s.
+  useEffect(() => {
+    if (!result) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const response = await fetch(
+          `/api/outreach/views?domain=${encodeURIComponent(result.domain)}`,
+          { cache: "no-store" },
+        );
+        if (!response.ok || cancelled) return;
+        const payload = (await response.json()) as {
+          views: Record<ExecRole, number>;
+          statuses: Record<string, RoleEmailStatus>;
+        };
+        setViews(payload.views);
+        setStatuses(payload.statuses);
+      } catch {
+        // Keep the last known numbers.
+      }
+    };
+    void poll();
+    const timer = setInterval(poll, 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [result]);
+
+  const updateStatus = (token: string, status: RoleEmailStatus) =>
+    setStatuses((prev) => ({ ...prev, [token]: status }));
 
   const run = useCallback(
     async (target: string, businessId?: string) => {
@@ -101,8 +156,20 @@ export default function OutreachPage() {
         </h1>
         <p className="text-sm text-zinc-400">
           Public, sourced facts only. Every quote is checked against its source before it can
-          appear in an email. Nothing is sent from this page.
+          appear in an email. Emails are drafts: download or open them in your mail app.
+          Sending needs an admin secret and runs as a dry run to a test inbox by default.
         </p>
+        <label className="mt-2 flex max-w-sm items-center gap-2 rounded-lg border border-velho-line bg-velho-ink px-3 py-2 text-xs text-zinc-300">
+          <KeyRound className="h-3.5 w-3.5 shrink-0 text-velho-muted" />
+          <input
+            type="password"
+            value={adminSecret}
+            onChange={(event) => updateSecret(event.target.value)}
+            placeholder="Admin secret (only needed to send)"
+            autoComplete="off"
+            className="w-full bg-transparent outline-none placeholder:text-velho-muted"
+          />
+        </label>
       </header>
 
       <form
@@ -201,6 +268,10 @@ export default function OutreachPage() {
                 key={result.createdAt}
                 emails={result.emails}
                 leaders={result.leaders}
+                views={views}
+                statuses={statuses}
+                adminSecret={adminSecret}
+                onStatus={updateStatus}
               />
             )}
             <a
