@@ -13,6 +13,7 @@ import { writeRoleEmails, type RoleLinks, type RoleRequest } from "@/lib/outreac
 import { buildCostEstimate, parseHourlyCost } from "@/lib/outreach/pure/estimate";
 import { assessSufficiency } from "@/lib/outreach/pure/sufficiency";
 import { dedupeFacts, verifyFacts } from "@/lib/outreach/pure/verify";
+import { assignLeaderEmails } from "@/lib/outreach/research/contacts";
 import { legalNamesFromText, resolveEntity } from "@/lib/outreach/research/entity";
 import { extractFactsAndLeaders } from "@/lib/outreach/research/extract";
 import { jobAdsSource } from "@/lib/outreach/research/jobAds";
@@ -45,7 +46,7 @@ export interface RunOptions {
   /** Base URL for video / unsubscribe links (public URL in production). */
   appOrigin: string;
   onProgress?: (event: OutreachProgressEvent) => void;
-  /** Roles to write. M1 writes the CEO email only. */
+  /** Roles to write. Roles without a named leader fold into the CEO email. */
   roles?: ExecRole[];
 }
 
@@ -63,7 +64,7 @@ const groupSignals = (facts: SourcedFact[]): CompanySignals => ({
 
 export const runOutreach = async (
   request: OutreachRequest,
-  { appOrigin, onProgress, roles = ["CEO"] }: RunOptions,
+  { appOrigin, onProgress, roles = ["CEO", "COO", "CFO"] }: RunOptions,
 ): Promise<OutreachResult> => {
   const startedAt = Date.now();
   const language: OutreachLanguage = request.language === "fi" ? "fi" : "en";
@@ -162,31 +163,39 @@ export const runOutreach = async (
   const facts = dedupeFacts([...extraction.facts, ...deterministic.verified]);
   const rejectedFacts = extraction.rejected + deterministic.rejected.length;
 
-  const ceo = extraction.leaders.find((leader) => leader.role === "CEO");
+  // Work addresses from the company's own site (never invented).
+  const contacts = await assignLeaderEmails(extraction.leaders, website.pages, domain);
+  const leaders = contacts.leaders;
+  log.push(contacts.log);
+  emit("extract", contacts.log.note);
+
+  const ceo = leaders.find((leader) => leader.role === "CEO");
   const sufficiency = assessSufficiency(facts, Boolean(ceo?.name));
 
+  // One estimate for every role, so CEO / COO / CFO see the same numbers.
   const estimate = buildCostEstimate(
     problem.data.impact.hoursLostPerWeek,
     parseHourlyCost(process.env.ASSUMED_HOURLY_COST_EUR),
-    undefined,
+    extraction.financials?.operatingProfitEur,
     language,
   );
 
   // Which emails to write: insufficient -> none; weak -> CEO only.
   const wanted: ExecRole[] = sufficiency === "insufficient" ? [] : sufficiency === "weak" ? ["CEO"] : roles;
-  const roleRequests: RoleRequest[] = wanted
-    .filter((role) => role === "CEO" || extraction.leaders.some((l) => l.role === role && l.name))
-    .map((role) => ({
-      role,
-      mergedRoles:
-        role === "CEO"
-          ? (["COO", "CFO"] as const).filter(
-              (other) =>
-                roles.includes(other) &&
-                !extraction.leaders.some((l) => l.role === other && l.name),
-            )
-          : [],
-    }));
+  const ownEmailRoles = wanted.filter(
+    (role) => role === "CEO" || leaders.some((l) => l.role === role && l.name),
+  );
+  // Every requested role without its own email folds into the CEO email
+  // (leader not found, or only "weak" evidence).
+  const roleRequests: RoleRequest[] = ownEmailRoles.map((role) => ({
+    role,
+    mergedRoles:
+      role === "CEO"
+        ? (["COO", "CFO"] as const).filter(
+            (other) => roles.includes(other) && !ownEmailRoles.includes(other),
+          )
+        : [],
+  }));
 
   const base = appOrigin.replace(/\/$/, "");
   const links: Partial<Record<ExecRole, RoleLinks>> = {};
@@ -205,7 +214,7 @@ export const runOutreach = async (
     const written = await writeRoleEmails({
       companyName,
       language,
-      leaders: extraction.leaders,
+      leaders,
       facts: facts.filter((fact) => fact.kind !== "company"),
       estimate,
       problem: problem.data,
@@ -239,8 +248,8 @@ export const runOutreach = async (
     createdAt: new Date().toISOString(),
     language,
     entity: entity.match,
-    leaders: extraction.leaders,
-    signals: groupSignals(facts),
+    leaders,
+    signals: { ...groupSignals(facts), financials: extraction.financials },
     facts,
     rejectedFacts,
     sufficiency,

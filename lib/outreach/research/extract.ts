@@ -10,6 +10,7 @@ import {
 } from "@/lib/outreach/pure/verify";
 import { nextFactId, nowIso } from "@/lib/outreach/research/source";
 import type {
+  CompanyFinancials,
   ExecRole,
   FactKind,
   FetchedPage,
@@ -84,9 +85,13 @@ Every item needs "quote": an EXACT, verbatim substring (12-200 characters) copie
 Respond with ONLY a JSON object:
 {
   "leaders": [ { "name": string, "title": string (exact published title), "quote": string (must contain the name and title), "sourceUrl": string, "inRoleSince": string | null } ],
-  "facts": [ { "kind": "strategy_goal" | "financial" | "hiring" | "why_now" | "leader_statement", "text": string (one sentence in English), "quote": string, "quoteLang": "fi" | "en" | "sv", "sourceUrl": string } ]
+  "facts": [ { "kind": "strategy_goal" | "financial" | "hiring" | "why_now" | "leader_statement", "text": string (one sentence in English), "quote": string, "quoteLang": "fi" | "en" | "sv", "sourceUrl": string } ],
+  "financials": { "year": number, "revenueEur": number | null, "operatingProfitEur": number | null, "employees": number | null, "quote": string (the sentence or table row stating these figures), "sourceUrl": string } | null
 }
-List at most 6 leaders (company-level executives only) and at most 8 facts. Return empty arrays if nothing qualifies.`;
+Leaders: company-level executives only, especially the CEO (toimitusjohtaja), the CFO (talousjohtaja / finance director) and whoever runs operations, supply chain, production or logistics. At most 6.
+Facts: at most 8. Use "why_now" for recent changes: a new CEO or executive, cost cuts or change negotiations, expansion, acquisitions, new plants, record orders.
+Financials: only the latest year stated in the SOURCE; amounts in plain euros (52.7 MEUR = 52700000). Use null if not stated.
+Return empty arrays / null if nothing qualifies.`;
 
 interface RawLeader {
   name?: unknown;
@@ -104,10 +109,23 @@ interface RawFact {
   sourceUrl?: unknown;
 }
 
+interface RawFinancials {
+  year?: unknown;
+  revenueEur?: unknown;
+  operatingProfitEur?: unknown;
+  employees?: unknown;
+  quote?: unknown;
+  sourceUrl?: unknown;
+}
+
 interface RawExtraction {
   leaders?: RawLeader[];
   facts?: RawFact[];
+  financials?: RawFinancials | null;
 }
+
+const num = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
 
 const FACT_KINDS: FactKind[] = [
   "strategy_goal",
@@ -122,6 +140,8 @@ const str = (value: unknown): string => (typeof value === "string" ? value.trim(
 export interface ExtractionResult {
   leaders: LeaderProfile[];
   facts: SourcedFact[];
+  /** Only set when its quote verified against a fetched page. */
+  financials?: CompanyFinancials;
   rejected: number;
   usedLlm: boolean;
   note: string;
@@ -349,6 +369,44 @@ export const extractFactsAndLeaders = async (
     })
     .filter((fact): fact is SourcedFact => fact !== null);
 
+  // Structured financials: accepted only if their quote verifies.
+  let financials: CompanyFinancials | undefined;
+  const rawFinancials = raw?.financials;
+  const year = num(rawFinancials?.year);
+  if (rawFinancials && year && str(rawFinancials.quote)) {
+    const revenue = num(rawFinancials.revenueEur);
+    const profit = num(rawFinancials.operatingProfitEur);
+    const employees = num(rawFinancials.employees);
+    const parts = [
+      revenue !== undefined ? `Revenue ${(revenue / 1e6).toFixed(1)} MEUR` : null,
+      profit !== undefined ? `operating profit ${(profit / 1e6).toFixed(1)} MEUR` : null,
+      employees !== undefined ? `${employees} employees` : null,
+    ].filter((part): part is string => part !== null);
+    const proof: SourcedFact = {
+      id: nextFactId("fin"),
+      kind: "financial",
+      text: `${parts.join(", ")} (${year}).`,
+      quote: str(rawFinancials.quote),
+      quoteLang: "fi",
+      sourceUrl: str(rawFinancials.sourceUrl),
+      retrievedAt,
+    };
+    const check = verifyFacts([proof], sourceTexts);
+    const verifiedProof = check.verified[0];
+    if (verifiedProof && parts.length > 0) {
+      financials = {
+        year,
+        revenueEur: revenue,
+        operatingProfitEur: profit,
+        employees,
+        sourceUrl: verifiedProof.sourceUrl,
+      };
+      factCandidates.push(verifiedProof);
+    } else {
+      rejected += 1;
+    }
+  }
+
   const { verified, rejected: rejectedFacts } = verifyFacts(factCandidates, sourceTexts);
   rejected += rejectedFacts.length;
 
@@ -365,6 +423,7 @@ export const extractFactsAndLeaders = async (
   return {
     leaders,
     facts: dedupeFacts(verified),
+    financials,
     rejected,
     usedLlm: true,
     note: `Verified ${verified.length} fact(s) and ${verifiedLeaders.length} leader(s); rejected ${rejected} unverifiable item(s)`,

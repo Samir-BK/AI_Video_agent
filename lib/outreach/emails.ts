@@ -196,7 +196,7 @@ const templateEmail = (
   if (ctx.language === "fi") {
     const body = [
       openingSentence(lead, companyName, "fi"),
-      request.role === "CFO"
+      request.role === "CFO" || request.mergedRoles.includes("CFO")
         ? `Arviomme mukaan manuaalinen työ maksaa ${estimate.formula}.`
         : `Arviomme mukaan manuaalinen työ vie tiimiltänne noin ${hours} tuntia kuukaudessa.`,
       `Teimme 45 sekunnin videon siitä, miltä ${solution.architectureName} voisi näyttää teillä.`,
@@ -224,6 +224,11 @@ const templateEmail = (
         : ""
     }.`,
   };
+
+  // With no COO/CFO found, the CEO email carries their numbers too.
+  if (request.role === "CEO" && request.mergedRoles.length > 0) {
+    angle.CEO = `${angle.CEO} Our estimate is about ${hours} hours of manual work a month (${estimate.formula}).`;
+  }
 
   const body = [
     openingSentence(lead, companyName, "en"),

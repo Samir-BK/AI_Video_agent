@@ -60,7 +60,7 @@ export async function POST(request: Request): Promise<Response> {
       try {
         const result = await runOutreach(
           { domain, businessId, language },
-          { appOrigin, onProgress: send, roles: ["CEO"] },
+          { appOrigin, onProgress: send, roles: ["CEO", "COO", "CFO"] },
         );
         send({ type: "result", result });
       } catch (error) {

@@ -65,13 +65,21 @@ const scoreCandidate = (
     }
   }
   if (label && normalized.replace(/\s+/g, "") === label) score = Math.max(score, 55);
-  // Prefer companies without a website that points elsewhere.
-  if (website && brandLabel(website) !== label) score -= 20;
+  // A fuzzy name match whose registered website points elsewhere is suspect.
+  // An exact legal-name match keeps its score (companies often register a
+  // short domain, e.g. "Lassila & Tikanoja Oyj" -> lt.fi).
+  if (website && brandLabel(website) !== label && score < 60) score -= 20;
   return { candidate, score, method: score > 0 ? "name" : "none" };
 };
 
+/** Words that precede a company name in footers ("Copyright Example Oy"). */
+const LEADING_NOISE = new Set([
+  "copyright", "tekijänoikeus", "all", "rights", "reserved", "by", "powered", "from", "and",
+]);
+
+/** "Sinituote Oy", "Würth Oy", "Lassila & Tikanoja Oyj". */
 const LEGAL_NAME_PATTERN =
-  /([A-ZÅÄÖ][A-Za-zÅÄÖåäöé&.'-]+(?: [A-ZÅÄÖ][A-Za-zÅÄÖåäöé&.'-]+){0,3}) (Oyj|Oy|Ab)\b/g;
+  /(\p{Lu}[\p{L}.'-]+(?: (?:&|\p{Lu}[\p{L}.'-]+)){0,3}) (Oyj|Oy|Ab)(?![\p{L}])/gu;
 
 /**
  * Legal names printed on the company's own site ("© Sinituote Oy") are the
@@ -83,7 +91,11 @@ export const legalNamesFromText = (texts: string[], domain: string): string[] =>
   const counts = new Map<string, number>();
   for (const text of texts) {
     for (const match of text.matchAll(LEGAL_NAME_PATTERN)) {
-      const name = `${match[1] ?? ""} ${match[2] ?? ""}`.trim();
+      const words = (match[1] ?? "").split(" ");
+      while (words.length > 1 && LEADING_NOISE.has((words[0] ?? "").toLowerCase())) {
+        words.shift();
+      }
+      const name = `${words.join(" ")} ${match[2] ?? ""}`.trim();
       counts.set(name, (counts.get(name) ?? 0) + 1);
     }
   }

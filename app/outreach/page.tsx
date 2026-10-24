@@ -3,8 +3,8 @@
 import { useCallback, useRef, useState } from "react";
 import { ArrowRight, Loader2, PlayCircle, Radar } from "lucide-react";
 
-import EmailCard from "@/app/outreach/components/EmailCard";
 import ResearchPanel from "@/app/outreach/components/ResearchPanel";
+import RoleSwitcher from "@/app/outreach/components/RoleSwitcher";
 import type {
   EntityCandidate,
   OutreachLanguage,
@@ -197,7 +197,11 @@ export default function OutreachPage() {
                 company. Check the research log, or pick a different company match.
               </p>
             ) : (
-              result.emails.map((email) => <EmailCard key={email.role} email={email} />)
+              <RoleSwitcher
+                key={result.createdAt}
+                emails={result.emails}
+                leaders={result.leaders}
+              />
             )}
             <a
               href={`/v/${encodeURIComponent(result.domain)}`}

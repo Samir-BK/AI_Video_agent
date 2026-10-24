@@ -96,6 +96,15 @@ export default function ResearchPanel({ result, onPickCompany, disabled }: Resea
                       source
                     </a>
                   )}
+                  <span className="ml-12 block text-xs text-velho-muted">
+                    {leader.email.address
+                      ? `${leader.email.address} · ${
+                          leader.email.method === "published"
+                            ? "published on the site"
+                            : "from the site's address format"
+                        }`
+                      : "no work address found"}
+                  </span>
                 </>
               ) : (
                 <span className="text-velho-muted">not found</span>
