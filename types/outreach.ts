@@ -275,3 +275,67 @@ export interface OutreachResult {
   usedFallback: boolean;
   totalDurationMs: number;
 }
+
+/* ------------------------------------------------------------------ */
+/* Search                                                              */
+/* ------------------------------------------------------------------ */
+
+/** Register status relevant for prospecting. */
+export type CompanyStatus = "active" | "liquidation" | "bankruptcy" | "ended";
+
+/** One company from the trade register, as shown in search results. */
+export interface CompanySummary {
+  businessId: string;
+  name: string;
+  /** Earlier official names, newest first. */
+  previousNames: string[];
+  city: string | null;
+  businessLineCode: string | null;
+  businessLine: string | null;
+  /**
+   * ISO date the business ID was registered. Companies registered before the
+   * electronic register started all carry 1978-03-15 — see `registeredBefore1978`.
+   */
+  registeredSince: string | null;
+  registeredBefore1978: boolean;
+  /** Website as registered in PRH (often missing). */
+  website: string | null;
+  companyForm: string | null;
+  status: CompanyStatus;
+  /** Public register page (attribution: PRH / YTJ open data, CC BY 4.0). */
+  sourceUrl: string;
+}
+
+export interface CompanySuggestion extends CompanySummary {
+  /** 0–100, how well the name matches the query. */
+  matchScore: number;
+}
+
+export interface CompanySearchResponse {
+  query: string;
+  suggestions: CompanySuggestion[];
+  totalResults: number;
+  /** Set when the register could not be reached. */
+  note?: string;
+}
+
+export interface DomainCheck {
+  domain: string;
+  /** What happened when we checked this candidate. */
+  outcome: "no_dns" | "unreachable" | "name_not_found" | "verified" | "registered";
+}
+
+/**
+ * Website for a company. "registered" = from the trade register;
+ * "verified_guess" = a guessed domain whose homepage contains the company's
+ * legal name or business ID. Never an unverified guess.
+ */
+export interface DomainResolution {
+  businessId: string;
+  domain: string | null;
+  method: "registered" | "verified_guess" | "none";
+  /** Exact text found on the homepage that proves the match. */
+  evidence: string | null;
+  checks: DomainCheck[];
+  durationMs: number;
+}
