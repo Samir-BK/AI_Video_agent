@@ -3,7 +3,12 @@ import "server-only";
 import { promises as dns } from "node:dns";
 
 import { fetchPageText, withTimeout } from "@/lib/outreach/fetchText";
-import { containsFolded, domainGuesses, hostFromWebsite } from "@/lib/outreach/pure/searchText";
+import {
+  containsFolded,
+  coreName,
+  domainGuesses,
+  hostFromWebsite,
+} from "@/lib/outreach/pure/searchText";
 import type { CompanySummary, DomainCheck, DomainResolution } from "@/types/outreach";
 
 /**
@@ -11,8 +16,9 @@ import type { CompanySummary, DomainCheck, DomainResolution } from "@/types/outr
  *
  * 1. The website registered in PRH, if it resolves and responds.
  * 2. Otherwise domain guesses from the legal name, each accepted only if DNS
- *    resolves AND the homepage text contains the legal name (current or
- *    previous) or the business ID.
+ *    resolves AND the homepage text (including its structured data) contains
+ *    the legal name (current or previous), a multi-word name without the
+ *    legal form, or the business ID.
  * Anything else: domain null, "website not found".
  */
 
@@ -54,13 +60,20 @@ const proofOnPage = (text: string, company: CompanySummary): string | null => {
   for (const name of [company.name, ...company.previousNames.slice(0, 2)]) {
     if (containsFolded(text, name)) return excerpt(text, name);
   }
+  // Brand sites rarely print the legal form ("Oy Karl Fazer Ab"), but a
+  // two-word name without it ("Karl Fazer") is still distinctive. A single
+  // word is not: it is the guessed domain itself.
+  const core = coreName(company.name);
+  if (core.includes(" ") && containsFolded(text, core)) return excerpt(text, core);
   return null;
 };
 
+// Versioned key: bump it when the resolution rules change, so a running
+// dev server does not keep answers from the old rules.
 const cacheStore = globalThis as typeof globalThis & {
-  __velhoDomainCache?: Map<string, { expires: number; value: DomainResolution }>;
+  __velhoDomainCacheV3?: Map<string, { expires: number; value: DomainResolution }>;
 };
-const cache = (cacheStore.__velhoDomainCache ??= new Map());
+const cache = (cacheStore.__velhoDomainCacheV3 ??= new Map());
 
 const checkGuess = async (
   host: string,
@@ -72,8 +85,11 @@ const checkGuess = async (
   const page = await fetchPageText(`https://${host}`, { timeoutMs: PAGE_TIMEOUT_MS });
   if (!page) return { check: { domain: host, outcome: "unreachable" }, evidence: null };
   const evidence = proofOnPage(page.text, company);
+  // A guess that redirects (karlfazer.fi -> www.fazer.com/fi/tuotemerkit/...)
+  // stands for the site it lands on.
+  const landed = hostFromWebsite(page.url) ?? host;
   return {
-    check: { domain: host, outcome: evidence ? "verified" : "name_not_found" },
+    check: { domain: evidence ? landed : host, outcome: evidence ? "verified" : "name_not_found" },
     evidence,
   };
 };

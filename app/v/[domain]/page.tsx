@@ -6,6 +6,7 @@ import { buildMockPipelineOutputs, companyNameFromDomain, normalizeDomain } from
 import { buildCostEstimate, parseHourlyCost } from "@/lib/outreach/pure/estimate";
 import { getOutreachStore } from "@/lib/outreach/store";
 import type { ExecRole } from "@/types/outreach";
+import { EXEC_ROLES } from "@/types/outreach";
 
 /**
  * Personal video page: /v/<domain>?r=<role>&t=<token>
@@ -24,7 +25,8 @@ interface PageProps {
   searchParams: Record<string, string | string[] | undefined>;
 }
 
-const ROLES: ExecRole[] = ["CEO", "COO", "CFO"];
+// Every role with an email can have a video link (?r=cto, ?r=sales, ...).
+const ROLES: readonly ExecRole[] = EXEC_ROLES;
 
 const parseRole = (value: string | string[] | undefined): ExecRole | null => {
   const upper = typeof value === "string" ? value.toUpperCase() : "";

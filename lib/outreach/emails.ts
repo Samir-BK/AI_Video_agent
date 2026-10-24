@@ -10,6 +10,7 @@ import type {
   RoleEmail,
   SourcedFact,
 } from "@/types/outreach";
+import { ROLE_LABELS } from "@/types/outreach";
 
 /**
  * Role-specific emails. One LLM call writes every requested role from the
@@ -71,11 +72,19 @@ const ROLE_THEMES: Record<OutreachLanguage, Record<ExecRole, string>> = {
     CEO: "Growth and strategy: the manual work standing between you and your stated goals",
     COO: "Operations: where your team's hours go, and how to free them up",
     CFO: "Cost: what the manual work costs per month, in euros",
+    CTO: "Systems: connecting the tools you already run instead of copying data by hand",
+    SALES: "Sales: faster quotes and order handling, more time for customers",
+    HR: "People: less routine work for a growing team, without adding headcount",
+    SERVICE: "Service and supply: incoming orders, emails and purchases handled faster",
   },
   fi: {
     CEO: "Kasvu ja strategia: manuaalinen työ julkaistujen tavoitteiden tiellä",
     COO: "Operatiivinen toiminta: mihin tiimin tunnit kuluvat ja miten ne vapautetaan",
     CFO: "Kustannukset: mitä manuaalinen työ maksaa kuukaudessa",
+    CTO: "Järjestelmät: nykyiset työkalut yhteen ilman tiedon kopiointia käsin",
+    SALES: "Myynti: nopeammat tarjoukset ja tilaukset, enemmän aikaa asiakkaille",
+    HR: "Henkilöstö: vähemmän rutiinityötä kasvavalle tiimille",
+    SERVICE: "Asiakaspalvelu ja hankinnat: tilaukset, viestit ja ostot nopeammin",
   },
 };
 
@@ -83,6 +92,22 @@ const ROLE_ANGLE: Record<ExecRole, string> = {
   CEO: "growth and strategy; connect the bottleneck to a stated goal or a 'why now' signal",
   COO: "operations; hours, volumes, where the bottleneck sits in the process; say 'free up your team's hours', never 'replace people'",
   CFO: "money; the monthly EUR estimate (always call it an estimate) and, if given, the share of operating profit; never mention payback time",
+  CTO: "systems and data flow; the fix integrates with the systems they already run (ERP, email, spreadsheets) rather than adding another tool; mention data stays in their systems",
+  SALES: "sales speed; quotes, order confirmations and customer replies that wait on manual work; more time with customers",
+  HR: "people; routine work that grows with headcount (hiring admin, onboarding, repetitive requests); never 'replace people', say 'free up hours'",
+  SERVICE: "customer service, purchasing and supply chain; incoming emails, orders and purchase orders handled by hand; response times",
+};
+
+/**
+ * Words that make a fact more relevant to a role, so two leaders at the same
+ * company open their emails with different facts (an IT job ad for the CTO,
+ * a customer-service ad for the service head).
+ */
+const ROLE_TOPICS: Partial<Record<ExecRole, RegExp>> = {
+  CTO: /\b(it|ict|erp|data|digi\w*|system\w*|järjestelm\w*|ohjelmisto\w*|software|developer|kehittäjä\w*|tietohallin\w*|integraat\w*)/iu,
+  SALES: /(myyn\w*|sales|account|asiakkuus\w*|tarjou\w*|kasv\w*|growth|export|vien\w*|markkin\w*)/iu,
+  HR: /(henkilöst\w*|rekry\w*|recruit\w*|hiring|palkka\w*|työntekij\w*|employ\w*|people|hr\b)/iu,
+  SERVICE: /(asiakaspalvel\w*|customer service|tilau\w*|order\w*|hankin\w*|osto\w*|procure\w*|purchas\w*|logist\w*|toimitus\w*|supply)/iu,
 };
 
 const firstName = (name: string | null): string | null =>
@@ -170,9 +195,15 @@ const factsForRole = (role: ExecRole, facts: SourcedFact[]): SourcedFact[] => {
     CEO: ["strategy_goal", "why_now", "leader_statement", "hiring", "financial", "company"],
     COO: ["hiring", "why_now", "strategy_goal", "leader_statement", "financial", "company"],
     CFO: ["financial", "strategy_goal", "why_now", "hiring", "leader_statement", "company"],
+    CTO: ["why_now", "strategy_goal", "hiring", "leader_statement", "financial", "company"],
+    SALES: ["strategy_goal", "hiring", "why_now", "leader_statement", "financial", "company"],
+    HR: ["hiring", "why_now", "strategy_goal", "leader_statement", "financial", "company"],
+    SERVICE: ["hiring", "why_now", "strategy_goal", "leader_statement", "financial", "company"],
   };
+  const topic = ROLE_TOPICS[role];
+  const onTopic = (fact: SourcedFact): number => (topic?.test(fact.text) ? 0 : 1);
   return [...facts].sort(
-    (a, b) => order[role].indexOf(a.kind) - order[role].indexOf(b.kind),
+    (a, b) => onTopic(a) - onTopic(b) || order[role].indexOf(a.kind) - order[role].indexOf(b.kind),
   );
 };
 
@@ -194,21 +225,32 @@ const templateEmail = (
   const hours = estimate.hoursPerMonth;
 
   if (ctx.language === "fi") {
-    const body = [
-      openingSentence(lead, companyName, "fi"),
+    const generic =
       request.role === "CFO" || request.mergedRoles.includes("CFO")
         ? `Arviomme mukaan manuaalinen työ maksaa ${estimate.formula}.`
-        : `Arviomme mukaan manuaalinen työ vie tiimiltänne noin ${hours} tuntia kuukaudessa.`,
+        : `Arviomme mukaan manuaalinen työ vie tiimiltänne noin ${hours} tuntia kuukaudessa.`;
+    const angleFi: Partial<Record<ExecRole, string>> = {
+      CTO: `Järjestelmien näkökulmasta kyse on usein tiedon siirtämisestä käsin järjestelmästä toiseen — arviomme mukaan noin ${hours} tuntia kuukaudessa. Ratkaisu liitetään nykyisiin järjestelmiinne, ei uutena erillisenä työkaluna.`,
+      SALES: `Myynnissä tämä näkyy hitaampina tarjouksina ja tilausvahvistuksina — arviomme mukaan noin ${hours} tuntia kuukaudessa, jotka voisivat kulua asiakkaiden kanssa.`,
+      HR: `Henkilöstön näkökulmasta kyse on toistuvasta työstä, joka kasvaa tiimin mukana — arviomme mukaan noin ${hours} tuntia kuukaudessa ilman lisärekrytointeja.`,
+      SERVICE: `Asiakaspalvelussa ja hankinnoissa tämä tarkoittaa usein saapuvien viestien ja tilausten käsittelyä käsin — arviomme mukaan noin ${hours} tuntia kuukaudessa.`,
+    };
+    const body = [
+      openingSentence(lead, companyName, "fi"),
+      angleFi[request.role] ?? generic,
       `Teimme 45 sekunnin videon siitä, miltä ${solution.architectureName} voisi näyttää teillä.`,
     ];
+    const subjectsFi: Record<ExecRole, string> = {
+      CEO: `${companyName}: 45 sekunnin idea kasvutavoitteeseen`,
+      COO: `${companyName}: ~${hours} h/kk takaisin tiimille`,
+      CFO: `${companyName}: manuaalisen työn kuukausikustannus`,
+      CTO: `${companyName}: nykyiset järjestelmät yhteen`,
+      SALES: `${companyName}: nopeammat tarjoukset ja tilaukset`,
+      HR: `${companyName}: rutiinityötä pois kasvavalta tiimiltä`,
+      SERVICE: `${companyName}: tilaukset ja viestit nopeammin`,
+    };
     return {
-      subject: truncateSubject(
-        {
-          CEO: `${companyName}: 45 sekunnin idea kasvutavoitteeseen`,
-          COO: `${companyName}: ~${hours} h/kk takaisin tiimille`,
-          CFO: `${companyName}: manuaalisen työn kuukausikustannus`,
-        }[request.role],
-      ),
+      subject: truncateSubject(subjectsFi[request.role]),
       body,
       callToAction: "Katso 45 sekunnin video:",
       facts: lead ? [lead] : [],
@@ -229,6 +271,10 @@ const templateEmail = (
         ? `, about ${estimate.shareOfOperatingProfitPct}% of operating profit per year`
         : ""
     }.`,
+    CTO: `On the systems side, ${lowerFirst(problem.title)} usually means people copying data between tools — about ${hours} hours a month by our estimate. The fix connects to the systems you already run instead of adding another one.`,
+    SALES: `For sales, that shows up as slower quotes and order confirmations — about ${hours} hours a month by our estimate that could go to customers instead.`,
+    HR: `For a growing team, this is routine work that grows with headcount — about ${hours} hours a month by our estimate that your team could spend on people instead of paperwork.`,
+    SERVICE: `In customer service and purchasing, it usually means incoming emails and orders handled by hand — about ${hours} hours a month by our estimate, and slower replies to customers.`,
   };
 
   // With no COO/CFO found, the CEO email carries their numbers too.
@@ -246,6 +292,10 @@ const templateEmail = (
     CEO: `${companyName}: a 45-second idea for your growth goal`,
     COO: `${companyName}: ~${hours} hours a month back for your team`,
     CFO: `${companyName}: the monthly cost of manual work`,
+    CTO: `${companyName}: connecting the systems you already run`,
+    SALES: `${companyName}: faster quotes and order handling`,
+    HR: `${companyName}: routine work off a growing team`,
+    SERVICE: `${companyName}: orders and emails handled faster`,
   };
 
   return {
@@ -263,7 +313,7 @@ Tone: modest Finnish business style. First sentence gets straight to the point. 
 Use ONLY the numbered FACTS and the ESTIMATE given. Never invent numbers, names or claims. Call the estimate an estimate.
 Each email: subject under 60 characters (no "Re:"), 3 to 5 short sentences in "body", a short "callToAction" that introduces the video link (do not write the link itself), and "factIds" listing the facts you used.
 Each role's email must be genuinely different.
-Respond with ONLY JSON: { "emails": [ { "role": "CEO"|"COO"|"CFO", "subject": string, "body": string[], "callToAction": string, "factIds": string[] } ] }`;
+Respond with ONLY JSON: { "emails": [ { "role": "CEO"|"COO"|"CFO"|"CTO"|"SALES"|"HR"|"SERVICE", "subject": string, "body": string[], "callToAction": string, "factIds": string[] } ] }`;
 
 interface RawEmail {
   role?: unknown;
@@ -371,7 +421,7 @@ export const writeRoleEmails = async (ctx: EmailContext): Promise<EmailWriteResu
       role,
       recipient: {
         name: leader?.name ?? null,
-        title: leader?.title || role,
+        title: leader?.title || ROLE_LABELS[role],
         email: leader?.email.address ?? null,
       },
       theme: ROLE_THEMES[ctx.language][role],

@@ -1,8 +1,10 @@
 # Velho Outreach — role-personalized video emails
 
 An add-on to the Velho Outreach Engine. For one company it writes a separate,
-sourced email for each decision-maker — **CEO, COO and CFO** — and each email
-links to a personal page with the company's 45-second video.
+sourced email for each decision-maker — **CEO, COO and CFO**, plus the heads of
+**IT (CTO/CIO), Sales, HR and Customer service & supply** when the company
+publishes them — and each email links to a personal page with the company's
+45-second video.
 
 The aim is that each executive opens the video because the email speaks to what
 their role cares about, using real public facts about the company:
@@ -15,7 +17,8 @@ Open it at **`/outreach`**. The original dashboard at `/` is unchanged.
 ## 1. What happens when you enter a domain
 
 ```
-domain ──► company website (leadership, investor, news, careers pages)
+domain ──► company website (leadership, investor, news, careers pages;
+       │     sitemap + structured data for browser-rendered sites)
        ├─► legacy pipeline: Discovery → Problem → Solution → Video Script
        ├─► trade register (PRH open data): domain → legal company
        ├─► job ads (Duunitori public search)
@@ -23,7 +26,7 @@ domain ──► company website (leadership, investor, news, careers pages)
        │
        ├─► extraction (1 LLM call): leaders, goals, "why now", financials
        │      └─ every quote checked against the fetched page text
-       ├─► work addresses from the company's own site (+ MX check)
+       ├─► work addresses, LinkedIn links and company accounts from the company's own site (+ MX check)
        ├─► sufficiency: ready / weak / insufficient
        └─► role emails (1 LLM call) ──► /v/<domain>?r=<role>&t=<token>
 ```
@@ -70,10 +73,33 @@ Renamed companies are handled (PRH keeps name history; a rename in the last
 - **CEO** — growth and strategy; ties the bottleneck to a stated goal or a "why now" signal.
 - **COO** — operations, hours, where the bottleneck sits; "free up your team's hours".
 - **CFO** — EUR/month (labelled estimate) and % of operating profit when verified financials exist.
+- **CTO / IT** — systems and data flow; the fix connects to the systems they already run.
+- **Sales** — slower quotes and order confirmations; more time for customers.
+- **HR** — routine work that grows with headcount; never "replace people".
+- **Service & supply** — customer service, purchasing and supply chain; incoming emails and orders handled by hand.
+
+CEO, COO and CFO are always considered (a missing COO/CFO folds into the CEO
+email). The other four get an email **only when a named person is published**
+for the role; they never fold into another email. Each role opens with the
+fact most relevant to it (an IT job ad for the CTO, a customer-service ad for
+the service head), so two leaders at one company read different emails.
 
 Finnish titles are mapped (`toimitusjohtaja` → CEO, `talousjohtaja` → CFO,
-`toimitusketjujohtaja` / `tuotantojohtaja` / "SVP Operations" → COO).
-Deputies are ignored.
+`tuotantojohtaja` / `logistiikkajohtaja` / "SVP Operations" → COO,
+`tietohallintojohtaja` / `IT-johtaja` / CIO → CTO, `myyntijohtaja` /
+`kaupallinen johtaja` → Sales, `henkilöstöjohtaja` → HR, `asiakaspalvelujohtaja`
+/ `hankintajohtaja` / `toimitusketjujohtaja` → Service & supply).
+Specific functions are checked before the generic ones, so "Supply Chain
+Director" is not swallowed by COO's "operations". Deputies are ignored.
+
+### Contact details per person — work information only
+- **Work email**: published on the company site, or built from the site's own
+  address format when its mail domain has MX records (unchanged rule).
+- **LinkedIn**: only a profile the company's own website links next to the
+  person's name. Nothing is searched elsewhere.
+- **Official company accounts** (Instagram, Facebook, LinkedIn, X, YouTube,
+  TikTok) as linked from the company site, one per platform.
+- Personal social-media accounts are **not** looked up (privacy, platform terms).
 
 | Level | Condition | Emails |
 |---|---|---|
@@ -130,7 +156,7 @@ templates, and labels what fell back.
 npm ci
 npm run dev                              # then open http://localhost:3000/outreach
 npm run typecheck
-node --test tests/outreach/*.test.mjs    # 45 unit tests, no extra dependencies
+node --test tests/outreach/*.test.mjs    # 57 unit tests, no extra dependencies
 ```
 
 Stored results, views and opt-outs live in memory and in
@@ -152,7 +178,8 @@ lib/outreach/fetchText.ts             full-text page fetcher
 lib/outreach/research/*.ts            website, PRH, entity, job ads, Tavily, extraction, contacts
 lib/outreach/search/*.ts              PRH search client, website resolution, criteria engine, enrichment
 lib/outreach/pure/*.ts                verification, roles, sufficiency, estimate, email pattern, .eml,
-                                      search text/filters/scoring/signals, PRH record parsing
+                                      search text/filters/scoring/signals/ranking, PRH record parsing,
+                                      HTML structured data, social links, sitemaps (htmlData)
 app/api/outreach/**                   stream, send, eml, unsubscribe, views, result
 app/api/outreach/search/**            companies, resolve, criteria (SSE), history
 app/outreach/**                       dashboard with search tabs (components/search/*)
@@ -187,9 +214,13 @@ CC BY 4.0 (attribution shown on the page).
 
 ### Website resolution — never an unverified guess
 1. The website registered in PRH, if it responds.
-2. Otherwise candidates from the legal name (`berner.fi`, `lassila-tikanoja.fi`, …),
-   each accepted only when DNS resolves **and** the homepage contains the legal
-   name (current or previous) or the business ID. The matching excerpt is shown.
+2. Otherwise candidates from the legal name (`berner.fi`, `lassila-tikanoja.fi`,
+   and single words such as `fazer.com` for "Oy Karl Fazer Ab"), each accepted
+   only when DNS resolves **and** the homepage (including its structured data)
+   contains the legal name (current or previous), a multi-word name without the
+   legal form ("Karl Fazer"), or the business ID. The matching excerpt is shown.
+   A guess that redirects is recorded as the site it lands on
+   (`karlfazer.fi` → `fazer.com`).
 3. Otherwise "website not found" and the operator can type it.
 This is deliberately strict: a site that says "Kesla" but never "Kesla Oyj" is
 not accepted automatically.
@@ -246,7 +277,21 @@ The default store is per machine — see `docs/OUTREACH_INTEGRATION.md` §5.
   news and financials should lift more companies to `ready`.
 - Some sites block automated reading (e.g. HTTP 403). The tool logs it and does
   not try to get around it; register and job-ad data still work.
-- Job ads come from one board (Duunitori) and are matched by company name.
+- Job ads come from one board (Duunitori) and are matched by company name, or
+  by the brand when the website's domain is one of the legal name's words
+  (fazer.com → ads posted as "Fazer"). A brand query can also match an
+  unrelated company that starts with the same word.
+- **Without an LLM key, only job ads count as substantive facts**, so a company
+  with no open ads is `insufficient` even when its management team is found
+  (e.g. lt.fi finds 5 leaders but writes nothing). With a key, goals, news and
+  financials fill this gap.
+- Sites rendered in the browser (e.g. fazer.com) are read through their meta
+  tags, JSON-LD and framework data plus the sitemap; text that only appears
+  after JavaScript runs is still missed. Groups whose management sits on a
+  separate corporate domain (fazergroup.com) get no named leaders.
+- Name suggestions rank the group head office, Velho-relevant industries, older
+  companies and those with a registered website higher; one-person service
+  firms (law, accounting, arts) lower.
 - The video itself (legacy player) is English; the page labels and emails
   support Finnish.
 - The default store is a temp-dir JSON file: fine locally, **not shared between

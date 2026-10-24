@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Eye, History, Loader2 } from "lucide-react";
 
 import type { HistoryRow, RoleEmailStatus } from "@/types/outreach";
+import { CORE_ROLES, EXEC_ROLES, ROLE_LABELS } from "@/types/outreach";
 
 const STATUS_OPTIONS: { value: "" | RoleEmailStatus; label: string }[] = [
   { value: "", label: "Any status" },
@@ -177,7 +178,9 @@ export default function HistorySearch({ onOpen, refreshKey }: HistorySearchProps
                     <Eye className="h-3 w-3" aria-hidden /> {row.totalViews}
                   </span>
                   <span className="block text-velho-muted">
-                    CEO {row.views.CEO} · COO {row.views.COO} · CFO {row.views.CFO}
+                    {EXEC_ROLES.filter((role) => CORE_ROLES.includes(role) || row.views[role] > 0)
+                      .map((role) => `${ROLE_LABELS[role]} ${row.views[role] ?? 0}`)
+                      .join(" · ")}
                   </span>
                 </td>
                 <td className="px-3 py-3">

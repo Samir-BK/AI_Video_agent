@@ -20,9 +20,42 @@ import type {
 /* Shared primitives                                                   */
 /* ------------------------------------------------------------------ */
 
-export type ExecRole = "CEO" | "COO" | "CFO";
+/**
+ * Company-level roles that can get their own email. CEO, COO and CFO are the
+ * core three (COO/CFO fold into the CEO email when not found); the others get
+ * an email only when a named person is published for them.
+ * SALES = sales / commercial, HR = people, SERVICE = customer service,
+ * purchasing and supply chain.
+ */
+export type ExecRole = "CEO" | "COO" | "CFO" | "CTO" | "SALES" | "HR" | "SERVICE";
 
-export const EXEC_ROLES: readonly ExecRole[] = ["CEO", "COO", "CFO"] as const;
+export const EXEC_ROLES: readonly ExecRole[] = [
+  "CEO",
+  "COO",
+  "CFO",
+  "CTO",
+  "SALES",
+  "HR",
+  "SERVICE",
+] as const;
+
+/** Roles that are always considered; the rest only when a person is found. */
+export const CORE_ROLES: readonly ExecRole[] = ["CEO", "COO", "CFO"] as const;
+
+/** Short labels for buttons and tables. */
+export const ROLE_LABELS: Record<ExecRole, string> = {
+  CEO: "CEO",
+  COO: "COO",
+  CFO: "CFO",
+  CTO: "CTO / IT",
+  SALES: "Sales",
+  HR: "HR",
+  SERVICE: "Service & supply",
+};
+
+/** Zero count for every role (views, stats). */
+export const emptyRoleCounts = (): Record<ExecRole, number> =>
+  Object.fromEntries(EXEC_ROLES.map((role) => [role, 0])) as Record<ExecRole, number>;
 
 export type Confidence = "high" | "medium" | "low";
 
@@ -71,15 +104,32 @@ export interface SourcedFact {
 /* Research                                                            */
 /* ------------------------------------------------------------------ */
 
+export type SocialPlatform = "instagram" | "facebook" | "linkedin" | "x" | "youtube" | "tiktok";
+
+/** A link to an official account (company) or a work profile listed on the site (person). */
+export interface SocialLink {
+  platform: SocialPlatform;
+  url: string;
+  kind: "company" | "person";
+  /** Visible text around the link (used to match a person's name). */
+  context: string;
+}
+
 export interface FetchedPage {
   url: string;
   title: string;
-  /** Full visible text (not truncated like the legacy scraper). */
+  /**
+   * Full visible text (not truncated like the legacy scraper), followed by
+   * the page's structured data (meta description, JSON-LD) so sites that
+   * render in the browser still have readable content.
+   */
   text: string;
   /** Addresses found in mailto: links and visible text. */
   emails: string[];
   /** Same-host links found on the page, absolute URLs. */
   links: string[];
+  /** Official social accounts and site-listed work profiles. */
+  socialLinks: SocialLink[];
 }
 
 export interface ResearchLogEntry {
@@ -128,6 +178,12 @@ export interface LeaderProfile {
   confidence: Confidence;
   /** Fact that proves this person holds this title. */
   evidence: SourcedFact | null;
+  /**
+   * LinkedIn profile linked from the company's own website next to this
+   * person's name. Never looked up elsewhere; personal social accounts are
+   * out of scope (work information only).
+   */
+  linkedinUrl?: string | null;
 }
 
 export interface CompanyFinancials {
@@ -268,6 +324,8 @@ export interface OutreachResult {
   sufficiency: Sufficiency;
   estimate: CostEstimate;
   emails: RoleEmail[];
+  /** The company's official social accounts, as linked from its own website. */
+  companySocials?: SocialLink[];
   pipeline: OutreachPipelineData;
   researchLog: ResearchLogEntry[];
   llmCalls: number;

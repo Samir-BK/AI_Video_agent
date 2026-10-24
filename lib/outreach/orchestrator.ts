@@ -32,6 +32,7 @@ import type {
   ResearchLogEntry,
   SourcedFact,
 } from "@/types/outreach";
+import { EXEC_ROLES } from "@/types/outreach";
 
 /**
  * Runs the outreach layer end to end:
@@ -65,7 +66,7 @@ const groupSignals = (facts: SourcedFact[]): CompanySignals => ({
 
 export const runOutreach = async (
   request: OutreachRequest,
-  { appOrigin, onProgress, roles = ["CEO", "COO", "CFO"] }: RunOptions,
+  { appOrigin, onProgress, roles = [...EXEC_ROLES] }: RunOptions,
 ): Promise<OutreachResult> => {
   const startedAt = Date.now();
   const language: OutreachLanguage = request.language === "fi" ? "fi" : "en";
@@ -268,6 +269,7 @@ export const runOutreach = async (
     sufficiency,
     estimate,
     emails,
+    companySocials: contacts.socials,
     pipeline: {
       discovery: discovery.data,
       problem: problem.data,

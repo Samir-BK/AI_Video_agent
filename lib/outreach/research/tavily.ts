@@ -80,6 +80,7 @@ export const tavilySource: ResearchSource = {
         text: text.slice(0, 200_000),
         emails: [],
         links: [],
+        socialLinks: [],
       });
     }
 

@@ -79,14 +79,15 @@ export const hostFromWebsite = (website: string): string | null => {
 };
 
 const TLDS = ["fi", "com"];
-const MAX_GUESSES = 6;
+const MAX_GUESSES = 8;
 
 /** Words that are rarely part of a company's domain. */
 const DROPPABLE = new Set(["group", "finland", "suomi", "konserni", "and", "ja", "&"]);
 
 /**
  * Ordered guesses: full core name joined ("lassilatikanoja.fi"), hyphenated
- * ("lassila-tikanoja.fi"), then without generic words, then the first word.
+ * ("lassila-tikanoja.fi"), then without generic words, then single words
+ * (longest, last, first).
  */
 export const domainGuesses = (name: string, previousNames: string[] = []): string[] => {
   const labels: string[] = [];
@@ -108,6 +109,12 @@ export const domainGuesses = (name: string, previousNames: string[] = []): strin
     if (meaningful.length && meaningful.length !== words.length) {
       addLabel(meaningful.join(""));
       addLabel(meaningful.join("-"));
+    }
+    // Single words: brands often drop a founder's first name ("Oy Karl Fazer
+    // Ab" -> fazer.com), so the longest and last words come before the first.
+    if (meaningful.length > 1) {
+      addLabel([...meaningful].sort((a, b) => b.length - a.length)[0] ?? "");
+      addLabel(meaningful[meaningful.length - 1] ?? "");
     }
     if (words[0]) addLabel(words[0]);
   }

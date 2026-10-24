@@ -20,6 +20,7 @@ import type {
   OutreachResult,
   OutreachStreamEvent,
 } from "@/types/outreach";
+import { emptyRoleCounts } from "@/types/outreach";
 
 /**
  * Outreach dashboard: find a company (by domain, by name, by criteria, or in
@@ -28,7 +29,8 @@ import type {
  * Separate from the main dashboard (app/page.tsx), which is left unchanged.
  */
 
-const SAMPLE_DOMAINS = ["tamtron.fi", "nurminenlogistics.com", "sini.fi"];
+// nurminenlogistics.com answers 403 to server requests, so Berner replaces it.
+const SAMPLE_DOMAINS = ["tamtron.fi", "berner.fi", "sini.fi"];
 
 type Tab = "research" | "criteria" | "history";
 
@@ -49,7 +51,7 @@ function OutreachPage() {
   const [result, setResult] = useState<OutreachResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const [views, setViews] = useState<Record<ExecRole, number>>({ CEO: 0, COO: 0, CFO: 0 });
+  const [views, setViews] = useState<Record<ExecRole, number>>(emptyRoleCounts());
   const [statuses, setStatuses] = useState<Record<string, RoleEmailStatus>>({});
   const [adminSecret, setAdminSecret] = useState("");
 

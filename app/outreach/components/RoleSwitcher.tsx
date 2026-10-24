@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import EmailCard from "@/app/outreach/components/EmailCard";
 import type { ExecRole, LeaderProfile, RoleEmail, RoleEmailStatus } from "@/types/outreach";
+import { CORE_ROLES, EXEC_ROLES, ROLE_LABELS } from "@/types/outreach";
 
 interface RoleSwitcherProps {
   emails: RoleEmail[];
@@ -14,10 +15,9 @@ interface RoleSwitcherProps {
   onStatus: (token: string, status: RoleEmailStatus) => void;
 }
 
-const ROLES: ExecRole[] = ["CEO", "COO", "CFO"];
-
 /**
- * CEO / COO / CFO tabs. Roles without an email explain why: either the
+ * One tab per role: CEO / COO / CFO always, CTO / Sales / HR / Service only
+ * when a person was found or an email was written for them. Roles without an email explain why: either the
  * leader was not found (and the angle is folded into the CEO email) or there
  * was not enough verified information to write at all.
  */
@@ -33,11 +33,18 @@ export default function RoleSwitcher({
   const current = emails.find((email) => email.role === active);
   const foldedInto = emails.find((email) => email.mergedRoles.includes(active));
   const leader = leaders.find((l) => l.role === active);
+  const roles = EXEC_ROLES.filter(
+    (role) =>
+      CORE_ROLES.includes(role) ||
+      emails.some((email) => email.role === role) ||
+      leaders.some((l) => l.role === role && l.name),
+  );
+  const label = ROLE_LABELS[active];
 
   return (
     <div className="space-y-3">
-      <div className="flex gap-2" role="tablist">
-        {ROLES.map((role) => {
+      <div className="flex flex-wrap gap-2" role="tablist">
+        {roles.map((role) => {
           const has = emails.some((email) => email.role === role);
           return (
             <button
@@ -54,7 +61,7 @@ export default function RoleSwitcher({
                     : "border border-dashed border-velho-line text-velho-muted hover:bg-velho-ink"
               }`}
             >
-              {role}
+              {ROLE_LABELS[role]}
             </button>
           );
         })}
@@ -72,11 +79,11 @@ export default function RoleSwitcher({
         <p className="rounded-2xl border border-velho-line bg-velho-panel p-5 text-sm text-zinc-300">
           {foldedInto
             ? leader?.name
-              ? `${leader.name} (${leader.title}) was found, but the evidence is limited, so the ${active} angle is folded into the ${foldedInto.role} email.`
-              : `No ${active} found on public sources — this angle is folded into the ${foldedInto.role} email.`
+              ? `${leader.name} (${leader.title}) was found, but the evidence is limited, so the ${label} angle is folded into the ${ROLE_LABELS[foldedInto.role]} email.`
+              : `No ${label} found on public sources — this angle is folded into the ${ROLE_LABELS[foldedInto.role]} email.`
             : leader?.name
-              ? `${leader.name} (${leader.title}) was found, but there was not enough verified information to write a separate ${active} email.`
-              : `No ${active} email: not enough verified information about this role.`}
+              ? `${leader.name} (${leader.title}) was found, but there was not enough verified information to write a separate ${label} email.`
+              : `No ${label} email: not enough verified information about this role.`}
         </p>
       )}
     </div>

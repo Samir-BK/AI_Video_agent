@@ -1,3 +1,4 @@
+import { compareSuggestions } from "@/lib/outreach/pure/searchRank";
 import { nameMatchScore, queryFallbacks } from "@/lib/outreach/pure/searchText";
 import { queryPrh } from "@/lib/outreach/search/prhSearch";
 import type { CompanySearchResponse, CompanySuggestion } from "@/types/outreach";
@@ -6,15 +7,15 @@ import type { CompanySearchResponse, CompanySuggestion } from "@/types/outreach"
  * GET /api/outreach/search/companies?q=<name>
  *
  * Live company suggestions from the trade register (PRH open data, cached
- * 10 min). Active companies first, then by name match. Never throws: when the
- * register is unreachable the response carries a `note` and no suggestions.
+ * 10 min). Active companies first, then by name match plus company
+ * prominence (see searchRank). Never throws: when the register is
+ * unreachable the response carries a `note` and no suggestions.
  */
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_SUGGESTIONS = 10;
-const STATUS_RANK = { active: 0, liquidation: 1, bankruptcy: 2, ended: 3 } as const;
 
 const json = (payload: CompanySearchResponse, status = 200): Response =>
   new Response(JSON.stringify(payload), {
@@ -54,13 +55,8 @@ export async function GET(request: Request): Promise<Response> {
       matchScore: nameMatchScore(query, company.name, company.previousNames),
     }))
     .filter((company) => company.matchScore > 0)
-    .sort(
-      (a, b) =>
-        STATUS_RANK[a.status] - STATUS_RANK[b.status] ||
-        b.matchScore - a.matchScore ||
-        Number(Boolean(b.website)) - Number(Boolean(a.website)) ||
-        a.name.localeCompare(b.name),
-    )
+    // Active first, then name match plus prominence (head office, age, ...).
+    .sort(compareSuggestions)
     .slice(0, MAX_SUGGESTIONS);
 
   return json({ query, suggestions, totalResults: page.totalResults, note });
