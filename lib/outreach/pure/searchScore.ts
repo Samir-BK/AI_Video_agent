@@ -15,7 +15,8 @@ export const SCORE_WEIGHTS = {
   registeredWebsite: 5,
   recentRename: 10,
   // Enrichment (M3)
-  hiring: 30,
+  hiringManual: 30,
+  hiringOther: 10,
   verifiedWebsite: 5,
   noWebsite: -20,
   sizeInRange: 10,
@@ -73,20 +74,24 @@ export const scoreCompany = (
         ? { points: w.registeredWebsite, reason: `Website ${enrichment.domain.domain} (registered)` }
         : { points: w.verifiedWebsite, reason: `Website ${enrichment.domain.domain} (verified)` },
     );
-  } else if (enrichment && enrichment.status !== "pending") {
+  } else if (enrichment?.status === "done" && !enrichment.websiteTimedOut) {
     reasons.push({ points: w.noWebsite, reason: "No website found" });
   } else if (company.website) {
     reasons.push({ points: w.registeredWebsite, reason: "Website registered in PRH" });
   }
 
-  if (enrichment && enrichment.hiring.length > 0) {
+  const titles = (facts: { quote: string }[]) =>
+    facts
+      .slice(0, 2)
+      .map((fact) => fact.quote)
+      .join(", ");
+  if (enrichment && enrichment.manualHiring.length > 0) {
     reasons.push({
-      points: w.hiring,
-      reason: `Hiring: ${enrichment.hiring
-        .slice(0, 2)
-        .map((fact) => fact.quote)
-        .join(", ")}`,
+      points: w.hiringManual,
+      reason: `Hiring for manual work: ${titles(enrichment.manualHiring)}`,
     });
+  } else if (enrichment && enrichment.hiring.length > 0) {
+    reasons.push({ points: w.hiringOther, reason: `Hiring: ${titles(enrichment.hiring)}` });
   }
 
   if (enrichment?.size) {

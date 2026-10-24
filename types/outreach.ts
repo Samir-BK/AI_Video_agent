@@ -376,9 +376,14 @@ export interface ScoredCompany {
 
 export interface CompanyEnrichment {
   domain: DomainResolution | null;
+  /** All verified open positions. */
   hiring: SourcedFact[];
+  /** The subset that is mostly repetitive admin work (Velho's sweet spot). */
+  manualHiring: SourcedFact[];
   /** Employee count stated on the site or in a job ad, with its quote. */
   size: { employees: number; fact: SourcedFact } | null;
+  /** The website check ran out of time: unknown, not "no website". */
+  websiteTimedOut?: boolean;
   status: "pending" | "done" | "timed_out";
 }
 
@@ -419,4 +424,5 @@ export type CriteriaStreamEvent =
   | { type: "progress"; message: string; done: number; total: number }
   | { type: "result"; result: CriteriaResult }
   | { type: "enriched"; businessId: string; scored: ScoredCompany }
+  | { type: "enrichment_done"; done: number; timedOut: number; durationMs: number }
   | { type: "error"; message: string };

@@ -1,5 +1,7 @@
 import { INDUSTRY_GROUPS, REGIONS, isTolCode } from "@/lib/outreach/pure/searchFilters";
+import { scoreCompany } from "@/lib/outreach/pure/searchScore";
 import { runCriteriaSearch } from "@/lib/outreach/search/criteria";
+import { ENRICH_TOP_N, enrichMany } from "@/lib/outreach/search/enrich";
 import type { CriteriaRequest, CriteriaStreamEvent } from "@/types/outreach";
 
 /**
@@ -13,7 +15,7 @@ import type { CriteriaRequest, CriteriaStreamEvent } from "@/types/outreach";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 90;
 
 const json = (status: number, payload: unknown): Response =>
   new Response(JSON.stringify(payload), {
@@ -74,13 +76,45 @@ export async function POST(request: Request): Promise<Response> {
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     start: async (controller) => {
-      const send = (event: CriteriaStreamEvent) =>
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      let open = true;
+      const send = (event: CriteriaStreamEvent) => {
+        if (!open) return;
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        } catch {
+          open = false; // client went away
+        }
+      };
       try {
         const result = await runCriteriaSearch(parsed, (message, done, total) =>
           send({ type: "progress", message, done, total }),
         );
         send({ type: "result", result });
+
+        // Enrich the top results live: website, job ads, stated size.
+        const top = result.companies.slice(0, ENRICH_TOP_N);
+        if (top.length > 0) {
+          const startedAt = Date.now();
+          const now = new Date();
+          let checked = 0;
+          send({ type: "progress", message: `Checking the top ${top.length}: website, job ads, size…`, done: 0, total: top.length });
+          const summary = await enrichMany(
+            top.map((row) => row.company),
+            (company, enrichment) => {
+              const row = top.find((r) => r.company.businessId === company.businessId);
+              if (!row) return;
+              checked += 1;
+              const { score, reasons } = scoreCompany(company, { ageYears: row.ageYears, now, enrichment });
+              send({
+                type: "enriched",
+                businessId: company.businessId,
+                scored: { ...row, score, reasons, enrichment },
+              });
+              send({ type: "progress", message: `Checked ${checked} of ${top.length}`, done: checked, total: top.length });
+            },
+          );
+          send({ type: "enrichment_done", ...summary, durationMs: Date.now() - startedAt });
+        }
       } catch (error) {
         send({
           type: "error",

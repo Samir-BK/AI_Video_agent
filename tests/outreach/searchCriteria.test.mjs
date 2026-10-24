@@ -102,6 +102,7 @@ test("enrichment adds hiring, website and size points; score stays within 0–10
       status: "done",
       domain: { businessId: "x", domain: "esimerkki.fi", method: "verified_guess", evidence: "", checks: [], durationMs: 1 },
       hiring: [hiringFact],
+      manualHiring: [hiringFact],
       size: { employees: 80, fact: hiringFact },
     },
   });
@@ -109,7 +110,7 @@ test("enrichment adds hiring, website and size points; score stays within 0–10
   const none = scoreCompany(company({ companyForm: null }), {
     ageYears: 11,
     now: NOW,
-    enrichment: { status: "done", domain: null, hiring: [], size: null },
+    enrichment: { status: "done", domain: null, hiring: [], manualHiring: [], size: null },
   });
   assert.equal(none.score, 30 + 10 - 20);
 });

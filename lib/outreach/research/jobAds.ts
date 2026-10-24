@@ -72,6 +72,8 @@ export const jobAdsSource: ResearchSource = {
       };
     }
 
+    const core = normalizeCompanyName(company);
+    const escapedCore = core.replace(/[^\p{L}\p{N} ]/gu, "");
     const facts: SourcedFact[] = [];
     const seenRoles = new Set<string>();
     const retrievedAt = nowIso();
@@ -85,9 +87,16 @@ export const jobAdsSource: ResearchSource = {
       const title = htmlToText(heading).split("\n")[0]?.trim() ?? "";
 
       // Keep ads posted by the company itself or naming it in the title
-      // (staffing agencies often post on a client's behalf).
+      // (staffing agencies often post on a client's behalf). Whole words only:
+      // "dest" must not match "Destia". Finnish case endings ("Keslalle")
+      // are allowed after the brand in titles.
+      // The advertiser must BE the company (same name, or the name followed by
+      // more words) — "Christian Berner Oy" is not "Berner Oy".
+      const titleNorm = normalizeCompanyName(title);
       const mentions =
-        advertiser.includes(brand) || normalizeCompanyName(title).includes(brand);
+        advertiser === core ||
+        advertiser.startsWith(`${core} `) ||
+        new RegExp(`(^|\\s)${escapedCore}(lle|lla|n|lta|ssa|sta|ksi)?(\\s|$)`, "u").test(titleNorm);
       if (!mentions || title.length < 12 || !slug || GENERIC_TITLES.test(title)) continue;
 
       // The same opening is often posted by both the company and an agency.

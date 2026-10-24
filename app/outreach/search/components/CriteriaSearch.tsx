@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Download, ExternalLink, Filter, Loader2 } from "lucide-react";
 
+import { compareScored } from "@/lib/outreach/pure/searchScore";
 import type {
   CompanySummary,
   CriteriaRequest,
@@ -17,6 +18,8 @@ interface Option {
 }
 
 const PAGE_SIZE = 25;
+/** Must match ENRICH_TOP_N on the server. */
+const TOP_N = 25;
 
 /** Byte-order mark so Excel opens the UTF-8 CSV with ä/ö intact. */
 const UTF8_BOM = String.fromCharCode(0xfeff);
@@ -31,7 +34,7 @@ const csvCell = (value: string | number | null | undefined): string => {
 const exportCsv = (rows: ScoredCompany[]) => {
   const header = [
     "Score", "Company", "Business ID", "City", "Industry code", "Industry",
-    "Registered", "Age (years)", "Website", "Why", "Register page",
+    "Registered", "Age (years)", "Website", "Open positions", "Manual-work positions", "Employees", "Employees source", "Why", "Register page",
   ];
   const lines = rows.map((row) =>
     [
@@ -44,6 +47,10 @@ const exportCsv = (rows: ScoredCompany[]) => {
       row.company.registeredBefore1978 ? "before 1978" : row.company.registeredSince,
       row.ageYears,
       row.enrichment?.domain?.domain ?? row.company.website,
+      row.enrichment?.hiring.map((f) => f.quote).join("; "),
+      row.enrichment?.manualHiring.map((f) => f.quote).join("; "),
+      row.enrichment?.size?.employees,
+      row.enrichment?.size ? row.enrichment.size.fact.sourceUrl + " (" + row.enrichment.size.fact.quote + ")" : "",
       row.reasons.map((r) => `${r.points > 0 ? "+" : ""}${r.points} ${r.reason}`).join("; "),
       row.company.sourceUrl,
     ]
@@ -83,6 +90,10 @@ export default function CriteriaSearch({ onPick }: CriteriaSearchProps) {
   const [result, setResult] = useState<CriteriaResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
+  const [onlyHiring, setOnlyHiring] = useState(false);
+  const [onlyKnownSize, setOnlyKnownSize] = useState(false);
+  const [enriching, setEnriching] = useState(false);
+  const [enrichSummary, setEnrichSummary] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -107,12 +118,16 @@ export default function CriteriaSearch({ onPick }: CriteriaSearchProps) {
     setResult(null);
     setPage(0);
     setProgress("Starting…");
+    setEnriching(false);
+    setEnrichSummary(null);
 
     const request: CriteriaRequest = {
       industries: [...selected, ...customCode.split(/[\s,]+/).filter(Boolean)],
       region: region || undefined,
       cities: cities.split(",").map((c) => c.trim()).filter(Boolean),
       minAgeYears: minAge,
+      requireHiring: onlyHiring,
+      onlyKnownSize,
     };
 
     try {
@@ -141,8 +156,31 @@ export default function CriteriaSearch({ onPick }: CriteriaSearchProps) {
           if (!line) continue;
           const event = JSON.parse(line.slice(6)) as CriteriaStreamEvent;
           if (event.type === "progress") setProgress(event.message);
-          else if (event.type === "result") setResult(event.result);
-          else if (event.type === "error") setError(event.message);
+          else if (event.type === "result") {
+            setResult(event.result);
+            setEnriching(event.result.companies.length > 0);
+          } else if (event.type === "enriched") {
+            // Update the row in place; re-rank once everything is checked.
+            setResult((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    companies: prev.companies.map((row) =>
+                      row.company.businessId === event.businessId ? event.scored : row,
+                    ),
+                  }
+                : prev,
+            );
+          } else if (event.type === "enrichment_done") {
+            setEnriching(false);
+            setResult((prev) =>
+              prev ? { ...prev, companies: [...prev.companies].sort(compareScored) } : prev,
+            );
+            setEnrichSummary(
+              `Checked ${event.done} companies in ${(event.durationMs / 1000).toFixed(1)} s` +
+                (event.timedOut > 0 ? ` · ${event.timedOut} ran out of time` : ""),
+            );
+          } else if (event.type === "error") setError(event.message);
         }
       }
     } catch (caught) {
@@ -151,11 +189,22 @@ export default function CriteriaSearch({ onPick }: CriteriaSearchProps) {
       }
     } finally {
       setRunning(false);
+      setEnriching(false);
       setProgress(null);
     }
   };
 
-  const rows = result?.companies ?? [];
+  const checkedCount = (result?.companies ?? []).filter((row) => row.enrichment).length;
+  const topIds = new Set((result?.companies ?? []).slice(0, TOP_N).map((row) => row.company.businessId));
+  const isTop = (row: ScoredCompany) => topIds.has(row.company.businessId) && !row.enrichment;
+  const filtering = onlyHiring || onlyKnownSize;
+  // Hiring / size are only known for checked companies, so these filters
+  // narrow the list to the checked rows.
+  const rows = (result?.companies ?? []).filter(
+    (row) =>
+      (!onlyHiring || (row.enrichment?.hiring.length ?? 0) > 0) &&
+      (!onlyKnownSize || Boolean(row.enrichment?.size)),
+  );
   const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const visible = useMemo(() => rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE), [rows, page]);
 
@@ -183,6 +232,7 @@ export default function CriteriaSearch({ onPick }: CriteriaSearchProps) {
                 <input
                   type="checkbox"
                   className="sr-only"
+                  aria-label={option.label}
                   checked={selected.includes(option.id)}
                   onChange={() => toggle(option.id)}
                 />
@@ -239,6 +289,32 @@ export default function CriteriaSearch({ onPick }: CriteriaSearchProps) {
           </label>
         </div>
 
+        <div className="flex flex-wrap gap-4 text-xs text-zinc-300">
+          <label className="inline-flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={onlyHiring}
+              aria-label="Only companies hiring now"
+              onChange={(event) => setOnlyHiring(event.target.checked)}
+              className="accent-sky-500"
+            />
+            Only companies hiring now
+          </label>
+          <label className="inline-flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={onlyKnownSize}
+              aria-label="Only companies with a known size"
+              onChange={(event) => setOnlyKnownSize(event.target.checked)}
+              className="accent-sky-500"
+            />
+            Only companies with a known size
+          </label>
+          <span className="text-velho-muted">
+            Website, job ads and size are checked for the top {TOP_N} results.
+          </span>
+        </div>
+
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="submit"
@@ -267,6 +343,8 @@ export default function CriteriaSearch({ onPick }: CriteriaSearchProps) {
               <span className="font-semibold text-zinc-100">{rows.length}</span> prospects from{" "}
               {result.scanned} matching companies · {result.queriesRun} register queries in{" "}
               {(result.durationMs / 1000).toFixed(1)} s{result.cached ? " (cached)" : ""}
+              {enrichSummary ? ` · ${enrichSummary}` : ""}
+              {filtering ? ` · filters show ${rows.length} of ${checkedCount} checked companies` : ""}
             </p>
             <button
               type="button"
@@ -306,6 +384,7 @@ export default function CriteriaSearch({ onPick }: CriteriaSearchProps) {
                   <th scope="col" className="px-3 py-2">Industry</th>
                   <th scope="col" className="px-3 py-2">Age</th>
                   <th scope="col" className="px-3 py-2">Website</th>
+                  <th scope="col" className="px-3 py-2">Signals</th>
                   <th scope="col" className="px-3 py-2">Why</th>
                   <th scope="col" className="px-3 py-2"><span className="sr-only">Action</span></th>
                 </tr>
@@ -337,7 +416,10 @@ export default function CriteriaSearch({ onPick }: CriteriaSearchProps) {
                       {row.company.registeredBefore1978 ? "before 1978" : row.ageYears !== null ? `${row.ageYears} y` : "—"}
                     </td>
                     <td className="px-3 py-3 text-xs text-zinc-300">
-                      {row.enrichment?.domain?.domain ?? row.company.website ?? <span className="text-velho-muted">not checked</span>}
+                      <WebsiteCell row={row} pending={enriching && isTop(row)} />
+                    </td>
+                    <td className="px-3 py-3 text-xs text-zinc-300">
+                      <SignalsCell row={row} pending={enriching && isTop(row)} />
                     </td>
                     <td className="px-3 py-3 text-xs text-zinc-400">
                       <ul className="space-y-0.5">
@@ -365,7 +447,7 @@ export default function CriteriaSearch({ onPick }: CriteriaSearchProps) {
                 ))}
                 {visible.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-3 py-6 text-center text-sm text-zinc-400">
+                    <td colSpan={8} className="px-3 py-6 text-center text-sm text-zinc-400">
                       No prospects match these filters.
                     </td>
                   </tr>
@@ -410,6 +492,79 @@ export default function CriteriaSearch({ onPick }: CriteriaSearchProps) {
             </ul>
           </details>
         </section>
+      )}
+    </div>
+  );
+}
+
+const METHOD_LABEL = { registered: "registered", verified_guess: "verified", none: "" } as const;
+
+function WebsiteCell({ row, pending }: { row: ScoredCompany; pending: boolean }) {
+  const enrichment = row.enrichment;
+  if (pending) {
+    return (
+      <span className="inline-flex items-center gap-1 text-velho-muted">
+        <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> checking…
+      </span>
+    );
+  }
+  if (!enrichment) {
+    return row.company.website ? (
+      <span>{row.company.website}</span>
+    ) : (
+      <span className="text-velho-muted">not checked</span>
+    );
+  }
+  if (enrichment.domain?.domain) {
+    return (
+      <span title={enrichment.domain.evidence ?? undefined}>
+        {enrichment.domain.domain}
+        <span className="block text-velho-muted">{METHOD_LABEL[enrichment.domain.method]}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="text-amber-200/80">
+      {enrichment.websiteTimedOut || enrichment.status === "timed_out" ? "check timed out" : "not found"}
+    </span>
+  );
+}
+
+function SignalsCell({ row, pending }: { row: ScoredCompany; pending: boolean }) {
+  const enrichment = row.enrichment;
+  if (pending) return <span className="text-velho-muted">…</span>;
+  if (!enrichment) return <span className="text-velho-muted">—</span>;
+  const manual = new Set(enrichment.manualHiring.map((fact) => fact.id));
+  return (
+    <div className="space-y-1">
+      {enrichment.hiring.length === 0 ? (
+        <p className="text-velho-muted">no open positions</p>
+      ) : (
+        enrichment.hiring.slice(0, 3).map((fact) => (
+          <a
+            key={fact.id}
+            href={fact.sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            className={`block hover:underline ${manual.has(fact.id) ? "text-emerald-300" : "text-zinc-300"}`}
+          >
+            {manual.has(fact.id) ? "● " : "○ "}
+            {fact.quote}
+          </a>
+        ))
+      )}
+      {enrichment.size ? (
+        <a
+          href={enrichment.size.fact.sourceUrl}
+          target="_blank"
+          rel="noreferrer"
+          title={`“${enrichment.size.fact.quote}”`}
+          className="block text-zinc-300 hover:underline"
+        >
+          ~{enrichment.size.employees} employees
+        </a>
+      ) : (
+        <p className="text-velho-muted">size unknown</p>
       )}
     </div>
   );
