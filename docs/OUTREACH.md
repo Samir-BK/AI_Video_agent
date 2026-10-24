@@ -93,7 +93,7 @@ substance.
 | Copy email | dashboard | Plain text with subject |
 | Download .eml | `GET /api/outreach/eml?t=<token>` | Unsent draft (`X-Unsent: 1`), opens in Outlook / Apple Mail / Thunderbird, includes `List-Unsubscribe` headers |
 | Open in mail app | `mailto:` link | Uses the operator's own mail account |
-| Send | `POST /api/outreach/send` | Needs `x-admin-secret`; checks opt-outs and the daily limit; needs `RESEND_API_KEY`; **dry run by default** |
+| Send | `POST /api/outreach/send` | Gmail via `GMAIL_APP_PASSWORD` (Resend is the fallback). Dry run is the default and delivers only to `OUTREACH_TEST_EMAIL`, with no admin secret. A real recipient still needs `x-admin-secret`. `GET` reports whether a provider is connected. |
 | Unsubscribe | `/unsubscribe?t=<token>` | Confirm click (a GET never opts out) + RFC 8058 one-click POST at `/api/outreach/unsubscribe` |
 | Views | `GET /api/outreach/views?domain=` | Video-page views per role and live email statuses |
 
@@ -114,8 +114,9 @@ templates, and labels what fell back.
 | `ASSUMED_HOURLY_COST_EUR` | Hourly cost in the estimate (always shown as an assumption) | `40` |
 | `OUTREACH_SENDER_NAME` | Real Velho person in the signature | `[Sender name], Velho` |
 | `OUTREACH_SENDER_EMAIL` | From address (an outreach subdomain in production) | placeholder |
-| `OUTREACH_ADMIN_SECRET` | Required to send at all | sending disabled |
-| `RESEND_API_KEY` | Demo sending provider | draft-only |
+| `OUTREACH_ADMIN_SECRET` | Required only when `OUTREACH_DRY_RUN=false` | real sends disabled |
+| `GMAIL_APP_PASSWORD` | App password for `OUTREACH_SENDER_EMAIL`; the pitch sender | draft-only |
+| `RESEND_API_KEY` | Fallback sender when Gmail is not set | off |
 | `OUTREACH_DRY_RUN` | `false` sends to real recipients | `true` |
 | `OUTREACH_TEST_EMAIL` | Team inbox for dry runs | — |
 | `OUTREACH_DAILY_LIMIT_PER_INBOX` | Daily cap | `40` |
@@ -241,7 +242,7 @@ The default store is per machine — see `docs/OUTREACH_INTEGRATION.md` §5.
   support Finnish.
 - The default store is a temp-dir JSON file: fine locally, **not shared between
   serverless instances** — see `docs/OUTREACH_INTEGRATION.md`.
-- Resend and Tavily adapters are implemented but untested here (no keys).
+- Gmail sending needs `GMAIL_APP_PASSWORD`. Resend and Tavily adapters are implemented but untested here (no keys).
 - Search: stated employee counts are rare on Finnish company sites (0 of 16
   checked in one wholesale test), so "only known size" is off by default.
   Industry groups cover five Velho-relevant sectors; other sectors work via

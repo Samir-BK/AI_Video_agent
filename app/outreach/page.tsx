@@ -41,6 +41,25 @@ function OutreachPage() {
   const [views, setViews] = useState<Record<ExecRole, number>>({ CEO: 0, COO: 0, CFO: 0 });
   const [statuses, setStatuses] = useState<Record<string, RoleEmailStatus>>({});
   const [adminSecret, setAdminSecret] = useState("");
+  const [dryRun, setDryRun] = useState(true);
+  const [mailProvider, setMailProvider] = useState<"gmail" | "resend" | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/outreach/send", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: { dryRun?: boolean; provider?: "gmail" | "resend" | null } | null) => {
+        if (cancelled || !payload) return;
+        if (typeof payload.dryRun === "boolean") setDryRun(payload.dryRun);
+        setMailProvider(payload.provider ?? null);
+      })
+      .catch(() => {
+        // The send button still reports a clear error if the server is unreachable.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // The admin secret lives only in this browser tab's session.
   useEffect(() => {
@@ -214,16 +233,22 @@ function OutreachPage() {
         </h1>
         <p className="text-sm text-zinc-400">
           Public, sourced facts only. Every quote is checked against its source before it can
-          appear in an email. Emails are drafts: download or open them in your mail app.
-          Sending needs an admin secret and runs as a dry run to a test inbox by default.
+          appear in an email. Send delivers the draft from your Gmail to your own inbox, so a
+          pitch never contacts the company.
         </p>
+        {mailProvider === null && (
+          <p className="text-xs text-amber-200/90">
+            Gmail is not connected yet. Add GMAIL_APP_PASSWORD to .env.local and restart the dev
+            server, then Send to my inbox will deliver the draft.
+          </p>
+        )}
         <label className="mt-2 flex max-w-sm items-center gap-2 rounded-lg border border-velho-line bg-velho-ink px-3 py-2 text-xs text-zinc-300">
           <KeyRound className="h-3.5 w-3.5 shrink-0 text-velho-muted" />
           <input
             type="password"
             value={adminSecret}
             onChange={(event) => updateSecret(event.target.value)}
-            placeholder="Admin secret (only needed to send)"
+            placeholder="Admin secret (only when sending to the real recipient)"
             autoComplete="off"
             className="w-full bg-transparent outline-none placeholder:text-velho-muted"
           />
@@ -335,6 +360,7 @@ function OutreachPage() {
                 views={views}
                 statuses={statuses}
                 adminSecret={adminSecret}
+                dryRun={dryRun}
                 onStatus={updateStatus}
               />
             )}

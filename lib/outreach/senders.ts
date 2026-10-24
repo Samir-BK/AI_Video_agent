@@ -1,5 +1,7 @@
 import "server-only";
 
+import nodemailer from "nodemailer";
+
 import { buildEml, emailBodyText } from "@/lib/outreach/pure/emailText";
 import type { RoleEmail } from "@/types/outreach";
 
@@ -7,11 +9,10 @@ import type { RoleEmail } from "@/types/outreach";
  * Sending. The default is DRAFT ONLY: the dashboard offers a .eml download,
  * a mailto: link and copy-to-clipboard, and nothing leaves the server.
  *
- * `ResendSender` is optional and only active when RESEND_API_KEY is set. Even
- * then OUTREACH_DRY_RUN defaults to true, which redirects every email to
- * OUTREACH_TEST_EMAIL. Resend's terms do not allow unsolicited bulk email, so
- * for real cold outreach the leader should plug in a dedicated provider behind
- * the same `EmailSender` interface (see docs/OUTREACH_INTEGRATION.md).
+ * The pitch sender is Gmail: set GMAIL_APP_PASSWORD for OUTREACH_SENDER_EMAIL.
+ * OUTREACH_DRY_RUN defaults to true, which redirects every email to
+ * OUTREACH_TEST_EMAIL. Resend remains a fallback when RESEND_API_KEY is set
+ * and Gmail is not. Resend's terms do not allow unsolicited bulk email.
  */
 
 export interface SendRequest {
@@ -72,16 +73,60 @@ export const draftEml = (email: RoleEmail, config: SenderConfig): string =>
 
 const SEND_TIMEOUT_MS = 8000;
 
+const outbound = (email: RoleEmail, dryRun: boolean): { subject: string; text: string } => {
+  const intended = email.recipient.email
+    ? `${email.recipient.name ?? ""} <${email.recipient.email}>`.trim()
+    : "(no address found)";
+  const banner = dryRun
+    ? `[DRY RUN — not sent to the real recipient. Intended for: ${intended}, ${email.recipient.title}]\n\n`
+    : "";
+  return {
+    subject: dryRun ? `[Dry run] ${email.subject}` : email.subject,
+    text: `${banner}${emailBodyText(email)}`,
+  };
+};
+
+const gmailSender = (appPassword: string, config: SenderConfig): EmailSender => ({
+  id: "gmail",
+  send: async ({ email, to, dryRun }) => {
+    const message = outbound(email, dryRun);
+    const transport = nodemailer.createTransport({
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true,
+      auth: { user: config.fromAddress, pass: appPassword },
+      connectionTimeout: SEND_TIMEOUT_MS,
+      greetingTimeout: SEND_TIMEOUT_MS,
+      socketTimeout: SEND_TIMEOUT_MS,
+    });
+    try {
+      const info = await transport.sendMail({
+        from: `${config.fromName} <${config.fromAddress}>`,
+        to,
+        subject: message.subject,
+        text: message.text,
+        headers: {
+          "List-Unsubscribe": `<${email.unsubscribeUrl}>`,
+          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        },
+      });
+      return { ok: true, provider: "gmail", id: info.messageId };
+    } catch (error) {
+      return {
+        ok: false,
+        provider: "gmail",
+        error: error instanceof Error ? error.message : "Gmail send failed",
+      };
+    } finally {
+      transport.close();
+    }
+  },
+});
+
 const resendSender = (apiKey: string, config: SenderConfig): EmailSender => ({
   id: "resend",
   send: async ({ email, to, dryRun }) => {
-    const intended = email.recipient.email
-      ? `${email.recipient.name ?? ""} <${email.recipient.email}>`.trim()
-      : "(no address found)";
-    const banner = dryRun
-      ? `[DRY RUN — not sent to the real recipient. Intended for: ${intended}, ${email.recipient.title}]\n\n`
-      : "";
-
+    const message = outbound(email, dryRun);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
     try {
@@ -94,8 +139,8 @@ const resendSender = (apiKey: string, config: SenderConfig): EmailSender => ({
         body: JSON.stringify({
           from: `${config.fromName} <${config.fromAddress}>`,
           to: [to],
-          subject: dryRun ? `[Dry run] ${email.subject}` : email.subject,
-          text: `${banner}${emailBodyText(email)}`,
+          subject: message.subject,
+          text: message.text,
           headers: {
             "List-Unsubscribe": `<${email.unsubscribeUrl}>`,
             "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
@@ -127,8 +172,12 @@ const resendSender = (apiKey: string, config: SenderConfig): EmailSender => ({
   },
 });
 
-/** The configured network sender, or null when sending is draft-only. */
+/** Gmail when an app password is set, otherwise Resend, otherwise draft-only. */
 export const resolveSender = (config: SenderConfig): EmailSender | null => {
+  const appPassword = env("GMAIL_APP_PASSWORD").replace(/\s+/g, "");
+  if (appPassword && config.fromAddress.includes("@")) {
+    return gmailSender(appPassword, config);
+  }
   const key = env("RESEND_API_KEY");
   return key ? resendSender(key, config) : null;
 };

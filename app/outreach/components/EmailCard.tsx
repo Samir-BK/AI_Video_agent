@@ -12,6 +12,8 @@ interface EmailCardProps {
   status: RoleEmailStatus;
   views: number;
   adminSecret: string;
+  /** True while sends are redirected to the operator's own inbox. */
+  dryRun: boolean;
   onStatus: (token: string, status: RoleEmailStatus) => void;
 }
 
@@ -24,7 +26,14 @@ const STATUS_LABELS: Record<RoleEmailStatus, string> = {
   skipped: "Skipped",
 };
 
-export default function EmailCard({ email, status, views, adminSecret, onStatus }: EmailCardProps) {
+export default function EmailCard({
+  email,
+  status,
+  views,
+  adminSecret,
+  dryRun,
+  onStatus,
+}: EmailCardProps) {
   const [copied, setCopied] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendNote, setSendNote] = useState<string | null>(null);
@@ -178,12 +187,18 @@ export default function EmailCard({ email, status, views, adminSecret, onStatus 
         <button
           type="button"
           onClick={send}
-          disabled={sending || optedOut || !adminSecret}
-          title={adminSecret ? "Send via the configured provider" : "Enter the admin secret above to send"}
+          disabled={sending || optedOut || (!dryRun && !adminSecret)}
+          title={
+            dryRun
+              ? "Sends this draft from your Gmail to your own inbox"
+              : adminSecret
+                ? "Send to the real recipient"
+                : "Enter the admin secret above to send to the real recipient"
+          }
           className={buttonClass}
         >
           <Send className="h-3.5 w-3.5" />
-          {sending ? "Sending…" : "Send (dry run unless disabled)"}
+          {sending ? "Sending…" : dryRun ? "Send to my inbox" : "Send"}
         </button>
       </div>
       {sendNote && <p className="text-xs text-zinc-400">{sendNote}</p>}

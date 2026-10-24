@@ -11,6 +11,7 @@ interface RoleSwitcherProps {
   views: Record<ExecRole, number>;
   statuses: Record<string, RoleEmailStatus>;
   adminSecret: string;
+  dryRun: boolean;
   onStatus: (token: string, status: RoleEmailStatus) => void;
 }
 
@@ -27,6 +28,7 @@ export default function RoleSwitcher({
   views,
   statuses,
   adminSecret,
+  dryRun,
   onStatus,
 }: RoleSwitcherProps) {
   const [active, setActive] = useState<ExecRole>(emails[0]?.role ?? "CEO");
@@ -66,6 +68,7 @@ export default function RoleSwitcher({
           status={statuses[current.token] ?? current.status}
           views={views[current.role] ?? 0}
           adminSecret={adminSecret}
+          dryRun={dryRun}
           onStatus={onStatus}
         />
       ) : (

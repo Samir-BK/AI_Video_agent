@@ -5,13 +5,17 @@ import { getOutreachStore, tokenKey } from "@/lib/outreach/store";
 import type { RoleEmailStatus } from "@/types/outreach";
 
 /**
- * POST /api/outreach/send  { token }   header: x-admin-secret
+ * GET  /api/outreach/send
+ *   Whether the pitch sender is ready (Gmail app password, or Resend).
+ *
+ * POST /api/outreach/send  { token }   header: x-admin-secret (real sends only)
  *
  * Sends one stored role email. Guard rails, in order:
- *   1. OUTREACH_ADMIN_SECRET must be set and match the header.
+ *   1. A real recipient needs OUTREACH_ADMIN_SECRET. A dry run skips that,
+ *      because it only delivers to OUTREACH_TEST_EMAIL.
  *   2. The recipient must not be on the do-not-contact list.
  *   3. The daily per-inbox limit must not be reached.
- *   4. A provider (RESEND_API_KEY) must be configured.
+ *   4. Gmail (GMAIL_APP_PASSWORD) or Resend (RESEND_API_KEY) must be configured.
  *   5. OUTREACH_DRY_RUN (default true) redirects to OUTREACH_TEST_EMAIL.
  * Hackathon rule: real companies are never contacted without Velho's OK.
  */
@@ -31,15 +35,24 @@ const secretMatches = (expected: string, given: string): boolean => {
   return a.length === b.length && timingSafeEqual(a, b);
 };
 
+export async function GET(): Promise<Response> {
+  const config = readSenderConfig();
+  const sender = resolveSender(config);
+  return json(200, { dryRun: config.dryRun, provider: sender?.id ?? null });
+}
+
 export async function POST(request: Request): Promise<Response> {
   const config = readSenderConfig();
-  if (!config.adminSecret) {
-    return json(403, {
-      error: "Sending is disabled. Set OUTREACH_ADMIN_SECRET to enable it. Use “Download .eml” instead.",
-    });
-  }
-  if (!secretMatches(config.adminSecret, request.headers.get("x-admin-secret") ?? "")) {
-    return json(401, { error: "Wrong admin secret." });
+  if (!config.dryRun) {
+    if (!config.adminSecret) {
+      return json(403, {
+        error:
+          "Sending to a real recipient is disabled. Set OUTREACH_ADMIN_SECRET, or keep OUTREACH_DRY_RUN=true to deliver only to your inbox.",
+      });
+    }
+    if (!secretMatches(config.adminSecret, request.headers.get("x-admin-secret") ?? "")) {
+      return json(401, { error: "Wrong admin secret." });
+    }
   }
 
   let token = "";
@@ -68,7 +81,8 @@ export async function POST(request: Request): Promise<Response> {
   const sender = resolveSender(config);
   if (!sender) {
     return json(400, {
-      error: "No email provider configured (RESEND_API_KEY). Use “Download .eml” or “Open in mail app”.",
+      error:
+        "Gmail is not connected. Add GMAIL_APP_PASSWORD to .env.local (a Google app password for your sender account) and restart the dev server.",
     });
   }
 
