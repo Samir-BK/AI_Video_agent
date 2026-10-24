@@ -1,0 +1,7 @@
+# Cursor Project Rules - Velho Outreach Engine
+
+- Build a full-stack Next.js app (App Router) for an AI B2B video outreach platform.
+- Write strict TypeScript types for all agent steps and pipeline inputs/outputs.
+- Prevent live stage failures: implement fallback mock data for any domain scraping or LLM calls that take longer than 6 seconds.
+- Style UI using Tailwind CSS with dark theme (slate-900 / zinc accents).
+- Maintain strict 5-agent architecture: Discovery -> Problem -> Solution -> Video Script -> Email Draft.
