@@ -14,8 +14,7 @@ import { EXEC_ROLES } from "@/types/outreach";
  * This is the link every outreach email points to (it used to 404). It shows
  * the company's own video, the numbers for the reader's role with sources,
  * and a single booking button. A valid token records a view. If no research
- * is stored for the domain, a clearly labelled preview is shown instead of an
- * error.
+ * is stored for the domain, sample content is shown instead of an error.
  */
 
 export const dynamic = "force-dynamic";
@@ -73,7 +72,6 @@ export default function VideoPage({ params, searchParams }: PageProps) {
         )}
         facts={[]}
         bookingUrl={buildBookingUrl(companyName, domain)}
-        isPreview
       />
     );
   }
@@ -91,7 +89,6 @@ export default function VideoPage({ params, searchParams }: PageProps) {
       estimate={result.estimate}
       facts={result.facts.filter((fact) => fact.kind !== "company")}
       bookingUrl={buildBookingUrl(companyName, domain)}
-      isPreview={false}
     />
   );
 }

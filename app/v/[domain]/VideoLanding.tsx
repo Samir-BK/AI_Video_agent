@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarCheck, ChevronDown, ExternalLink, Info } from "lucide-react";
+import { CalendarCheck, ChevronDown, ExternalLink } from "lucide-react";
 
 import VideoPlayer from "@/app/components/VideoPlayer";
 import type {
@@ -22,14 +22,11 @@ interface VideoLandingProps {
   estimate: CostEstimate;
   facts: SourcedFact[];
   bookingUrl: string;
-  /** True when no research is stored and the page shows sample content. */
-  isPreview: boolean;
 }
 
 /** Page labels. The video itself (legacy player) is English-only for now. */
 const COPY = {
   en: {
-    preview: "Preview with sample content — no research has been run for this company yet.",
     madeFor: "Made for",
     fallbackHeadline: (company: string) => `A 45-second idea for ${company}`,
     statedGoal: "Your stated goal:",
@@ -48,7 +45,6 @@ const COPY = {
       `Velho · Built from public information about ${company}. Figures marked “assumption” are estimates.`,
   },
   fi: {
-    preview: "Esikatselu esimerkkisisällöllä — yrityksestä ei ole vielä tehty selvitystä.",
     madeFor: "Tehty yritykselle",
     fallbackHeadline: (company: string) => `45 sekunnin idea: ${company}`,
     statedGoal: "Julkaistu tavoitteenne:",
@@ -94,7 +90,6 @@ export default function VideoLanding({
   estimate,
   facts,
   bookingUrl,
-  isPreview,
 }: VideoLandingProps) {
   const t = COPY[language];
   const goal = facts.find((fact) => fact.kind === "strategy_goal");
@@ -131,13 +126,6 @@ export default function VideoLanding({
       lang={language}
       className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-6 px-4 py-8 sm:py-12"
     >
-      {isPreview && (
-        <div className="flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-          <Info className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>{t.preview}</span>
-        </div>
-      )}
-
       <header className="space-y-2">
         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-velho-muted">
           {t.madeFor} {companyName}

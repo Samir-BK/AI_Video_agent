@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import EmailCard from "@/app/outreach/components/EmailCard";
-import type { ExecRole, LeaderProfile, RoleEmail, RoleEmailStatus } from "@/types/outreach";
+import type { ExecRole, LeaderProfile, RoleEmail, RoleEmailStatus, SocialLink } from "@/types/outreach";
 import { CORE_ROLES, EXEC_ROLES, ROLE_LABELS } from "@/types/outreach";
 
 interface RoleSwitcherProps {
@@ -13,6 +13,9 @@ interface RoleSwitcherProps {
   statuses: Record<string, RoleEmailStatus>;
   adminSecret: string;
   dryRun: boolean;
+  inboxEmail: string | null;
+  companyName: string;
+  companySocials: SocialLink[];
   onStatus: (token: string, status: RoleEmailStatus) => void;
 }
 
@@ -29,6 +32,9 @@ export default function RoleSwitcher({
   statuses,
   adminSecret,
   dryRun,
+  inboxEmail,
+  companyName,
+  companySocials,
   onStatus,
 }: RoleSwitcherProps) {
   const [active, setActive] = useState<ExecRole>(emails[0]?.role ?? "CEO");
@@ -76,6 +82,9 @@ export default function RoleSwitcher({
           views={views[current.role] ?? 0}
           adminSecret={adminSecret}
           dryRun={dryRun}
+          inboxEmail={inboxEmail}
+          companyName={companyName}
+          companySocials={companySocials}
           onStatus={onStatus}
         />
       ) : (

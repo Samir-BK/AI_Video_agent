@@ -112,10 +112,14 @@ const gmailSender = (appPassword: string, config: SenderConfig): EmailSender => 
       });
       return { ok: true, provider: "gmail", id: info.messageId };
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Gmail send failed";
+      const rejected = /535|BadCredentials|Username and Password not accepted/i.test(message);
       return {
         ok: false,
         provider: "gmail",
-        error: error instanceof Error ? error.message : "Gmail send failed",
+        error: rejected
+          ? "Gmail rejected the login. Create a new app password at https://myaccount.google.com/apppasswords for the sender account (2-Step Verification must be on), set GMAIL_APP_PASSWORD to that 16-character password, and redeploy the live site."
+          : message,
       };
     } finally {
       transport.close();
@@ -174,7 +178,7 @@ const resendSender = (apiKey: string, config: SenderConfig): EmailSender => ({
 
 /** Gmail when an app password is set, otherwise Resend, otherwise draft-only. */
 export const resolveSender = (config: SenderConfig): EmailSender | null => {
-  const appPassword = env("GMAIL_APP_PASSWORD").replace(/\s+/g, "");
+  const appPassword = env("GMAIL_APP_PASSWORD").replace(/[^a-zA-Z0-9]/g, "");
   if (appPassword && config.fromAddress.includes("@")) {
     return gmailSender(appPassword, config);
   }

@@ -55,15 +55,17 @@ function OutreachPage() {
   const [statuses, setStatuses] = useState<Record<string, RoleEmailStatus>>({});
   const [adminSecret, setAdminSecret] = useState("");
   const [dryRun, setDryRun] = useState(true);
+  const [inboxEmail, setInboxEmail] = useState<string | null>(null);
   const [mailProvider, setMailProvider] = useState<"gmail" | "resend" | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void fetch("/api/outreach/send", { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
-      .then((payload: { dryRun?: boolean; provider?: "gmail" | "resend" | null } | null) => {
+      .then((payload: { dryRun?: boolean; provider?: "gmail" | "resend" | null; inbox?: string | null } | null) => {
         if (cancelled || !payload) return;
         if (typeof payload.dryRun === "boolean") setDryRun(payload.dryRun);
+        setInboxEmail(typeof payload.inbox === "string" && payload.inbox.includes("@") ? payload.inbox : null);
         setMailProvider(payload.provider ?? null);
       })
       .catch(() => {
@@ -462,6 +464,9 @@ function OutreachPage() {
                   statuses={statuses}
                   adminSecret={adminSecret}
                   dryRun={dryRun}
+                  inboxEmail={inboxEmail}
+                  companyName={result.entity.candidate?.name ?? result.domain}
+                  companySocials={result.companySocials ?? []}
                   onStatus={updateStatus}
                 />
               )}

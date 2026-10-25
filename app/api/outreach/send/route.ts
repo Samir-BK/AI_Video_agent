@@ -57,7 +57,11 @@ const secretMatches = (expected: string, given: string): boolean => {
 export async function GET(): Promise<Response> {
   const config = readSenderConfig();
   const sender = resolveSender(config);
-  return json(200, { dryRun: config.dryRun, provider: sender?.id ?? null });
+  return json(200, {
+    dryRun: config.dryRun,
+    provider: sender?.id ?? null,
+    inbox: config.testEmail,
+  });
 }
 
 export async function POST(request: Request): Promise<Response> {

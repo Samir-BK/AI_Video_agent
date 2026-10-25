@@ -86,6 +86,34 @@ test("gmailComposeUrl opens Gmail with the draft filled in", () => {
     writtenBy: "template",
     mergedRoles: [],
   });
-  assert.match(url, /^https:\/\/mail\.google\.com\/mail\/\?/);
-  assert.match(url, /ada%40example\.com/);
+  assert.match(url, /^https:\/\/mail\.google\.com\/mail\/\?extsrc=mailto&url=/);
+  const mailto = decodeURIComponent(url.split("url=")[1]);
+  assert.match(mailto, /^mailto:ada@example.com\?/);
+  assert.match(mailto, /subject=Hello%20Ada/);
+});
+
+test("gmailComposeUrl can address the operator inbox instead of the company", () => {
+  const url = gmailComposeUrl(
+    {
+      role: "CEO",
+      recipient: { name: "Ada", title: "CEO", email: "ada@example.com" },
+      theme: "Growth",
+      subject: "Hello Ada",
+      greeting: "Hi Ada,",
+      body: ["One line."],
+      callToAction: "Watch:",
+      footer: ["Velho"],
+      videoUrl: "https://example.com/v",
+      unsubscribeUrl: "https://example.com/u",
+      token: "t",
+      usedFacts: [],
+      language: "en",
+      status: "draft",
+      writtenBy: "template",
+      mergedRoles: [],
+    },
+    "operator@example.com",
+  );
+  const mailto = decodeURIComponent(url.split("url=")[1]);
+  assert.match(mailto, /^mailto:operator@example.com\?/);
 });

@@ -2,18 +2,11 @@
 
 import { Building2, ExternalLink, ShieldCheck, Users } from "lucide-react";
 
-import type { EntityCandidate, OutreachResult, SocialPlatform, Sufficiency } from "@/types/outreach";
+import ShareChannelsButton from "@/app/outreach/components/ShareChannelsButton";
+import type { EntityCandidate, OutreachResult, Sufficiency } from "@/types/outreach";
 import { CORE_ROLES, ROLE_LABELS } from "@/types/outreach";
 import { linkedinSearchUrl } from "@/lib/outreach/pure/linkedin";
-
-const SOCIAL_LABELS: Record<SocialPlatform, string> = {
-  instagram: "Instagram",
-  facebook: "Facebook",
-  linkedin: "LinkedIn",
-  x: "X",
-  youtube: "YouTube",
-  tiktok: "TikTok",
-};
+import { SOCIAL_LABELS } from "@/lib/outreach/pure/socialShare";
 
 interface ResearchPanelProps {
   result: OutreachResult;
@@ -200,8 +193,16 @@ export default function ResearchPanel({ result, onPickCompany, disabled }: Resea
               </a>
             ))}
           </div>
+          <ShareChannelsButton
+            companyName={companyName}
+            videoUrl={`/v/${encodeURIComponent(result.domain)}`}
+            callToAction="Watch the 45-second walkthrough and book a 15-minute meeting."
+            socials={result.companySocials}
+          />
           <p className="text-xs text-velho-muted">
-            Linked from the company&apos;s own website. Personal Instagram, Facebook and similar accounts are not looked up.
+            Linked from the company&apos;s own website. Personal Instagram, Facebook and similar
+            accounts are not looked up. The share button copies the video pitch and opens each
+            official account — it cannot send DMs for you.
           </p>
         </div>
       )}

@@ -10,7 +10,8 @@ import {
   gmailComposeUrl,
   rewriteLocalOrigins,
 } from "@/lib/outreach/pure/emailText";
-import type { RoleEmail, RoleEmailStatus } from "@/types/outreach";
+import ShareChannelsButton from "@/app/outreach/components/ShareChannelsButton";
+import type { RoleEmail, RoleEmailStatus, SocialLink } from "@/types/outreach";
 
 interface EmailCardProps {
   email: RoleEmail;
@@ -20,6 +21,10 @@ interface EmailCardProps {
   adminSecret: string;
   /** True while sends are redirected to the operator's own inbox. */
   dryRun: boolean;
+  /** Operator inbox. Dry-run "Open in Gmail" addresses this so To is already filled. */
+  inboxEmail: string | null;
+  companyName: string;
+  companySocials: SocialLink[];
   onStatus: (token: string, status: RoleEmailStatus) => void;
 }
 
@@ -38,6 +43,9 @@ export default function EmailCard({
   views,
   adminSecret,
   dryRun,
+  inboxEmail,
+  companyName,
+  companySocials,
   onStatus,
 }: EmailCardProps) {
   const [copied, setCopied] = useState(false);
@@ -102,6 +110,8 @@ export default function EmailCard({
       setSending(false);
     }
   };
+
+  const gmailTo = shown.recipient.email || (dryRun ? inboxEmail : "") || "";
 
   const buttonClass =
     "inline-flex items-center gap-2 rounded-lg border border-velho-line px-3 py-2 text-xs text-zinc-200 hover:bg-velho-ink disabled:cursor-not-allowed disabled:opacity-40";
@@ -209,11 +219,16 @@ export default function EmailCard({
           <Download className="h-3.5 w-3.5" /> Download .eml
         </button>
         <a
-          href={gmailComposeUrl(shown)}
+          href={gmailComposeUrl(shown, gmailTo)}
           target="_blank"
           rel="noopener noreferrer"
           className={buttonClass}
           aria-disabled={optedOut}
+          title={
+            gmailTo
+              ? `Opens Gmail with To set to ${gmailTo}`
+              : "No address found for this draft yet"
+          }
           onClick={(event) => optedOut && event.preventDefault()}
         >
           <Mail className="h-3.5 w-3.5" /> Open in Gmail
@@ -234,6 +249,12 @@ export default function EmailCard({
           <Send className="h-3.5 w-3.5" />
           {sending ? "Sending…" : dryRun ? "Send to my inbox" : "Send"}
         </button>
+        <ShareChannelsButton
+          companyName={companyName}
+          videoUrl={shown.videoUrl}
+          callToAction={shown.callToAction}
+          socials={companySocials}
+        />
       </div>
       {sendNote && <p className="text-xs text-zinc-400">{sendNote}</p>}
     </article>

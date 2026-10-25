@@ -33,16 +33,19 @@ export const mailtoUrl = (email: RoleEmail): string => {
   return `mailto:${encodeURIComponent(to).replace(/%40/g, "@")}?${query}`;
 };
 
-/** Gmail's web compose screen. Works in the browser when no mail app is installed. */
-export const gmailComposeUrl = (email: RoleEmail): string => {
-  const params = new URLSearchParams({
-    view: "cm",
-    fs: "1",
-    to: email.recipient.email ?? "",
-    su: email.subject,
-    body: emailBodyText(email),
+/**
+ * Gmail's web compose screen. A bare `to` query is ignored by current Gmail,
+ * which opens a blank To field. Handing Gmail a mailto URL is what fills To,
+ * subject, and body. `to` overrides the draft recipient (the operator inbox
+ * during a dry run).
+ */
+export const gmailComposeUrl = (email: RoleEmail, to?: string | null): string => {
+  const address = (to ?? email.recipient.email ?? "").trim();
+  const mailto = mailtoUrl({
+    ...email,
+    recipient: { ...email.recipient, email: address || null },
   });
-  return `https://mail.google.com/mail/?${params.toString()}`;
+  return `https://mail.google.com/mail/?extsrc=mailto&url=${encodeURIComponent(mailto)}`;
 };
 
 const LOCAL_ORIGIN = /https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/gi;
