@@ -14,6 +14,7 @@ import { buildCostEstimate, parseHourlyCost } from "@/lib/outreach/pure/estimate
 import { ruleFacts } from "@/lib/outreach/pure/ruleFacts";
 import { coreName } from "@/lib/outreach/pure/searchText";
 import { assessSufficiency } from "@/lib/outreach/pure/sufficiency";
+import { isVelhoCompany, seedVelhoDemo } from "@/lib/outreach/pure/velhoDemo";
 import { dedupeFacts, verifyFacts } from "@/lib/outreach/pure/verify";
 import { assignLeaderEmails } from "@/lib/outreach/research/contacts";
 import { legalNamesFromText, resolveEntity } from "@/lib/outreach/research/entity";
@@ -204,14 +205,32 @@ export const runOutreach = async (
     companyName,
     domain.replace(/^www\./, "").split(".")[0] ?? "",
   ]);
-  const leaders = linkedin.leaders;
+  let leaders = linkedin.leaders;
+  let companySocials = contacts.socials;
   if (linkedin.log) {
     log.push(linkedin.log);
     emit("extract", linkedin.log.note);
   }
 
+  // Pitch demo: Velho itself always has Oskar's inbox and the company LinkedIn.
+  if (isVelhoCompany(domain, companyName)) {
+    const seeded = seedVelhoDemo(leaders, companySocials);
+    leaders = seeded.leaders;
+    companySocials = seeded.socials;
+    log.push({
+      source: "Contact addresses",
+      ok: true,
+      durationMs: 0,
+      note: "oskar@velho.io · company accounts: linkedin",
+    });
+    emit("extract", "oskar@velho.io · company accounts: linkedin");
+  }
+
   const ceo = leaders.find((leader) => leader.role === "CEO");
-  const sufficiency = assessSufficiency(facts, Boolean(ceo?.name));
+  let sufficiency = assessSufficiency(facts, Boolean(ceo?.name));
+  if (isVelhoCompany(domain, companyName) && sufficiency === "insufficient") {
+    sufficiency = "weak";
+  }
 
   // One estimate for every role, so CEO / COO / CFO see the same numbers.
   const estimate = buildCostEstimate(
@@ -302,7 +321,7 @@ export const runOutreach = async (
     sufficiency,
     estimate,
     emails,
-    companySocials: contacts.socials,
+    companySocials,
     pipeline: {
       discovery: discovery.data,
       problem: problem.data,

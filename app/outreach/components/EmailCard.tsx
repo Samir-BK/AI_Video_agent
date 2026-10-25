@@ -11,6 +11,7 @@ import {
   rewriteLocalOrigins,
 } from "@/lib/outreach/pure/emailText";
 import ShareChannelsButton from "@/app/outreach/components/ShareChannelsButton";
+import { isVelhoLiveRecipient } from "@/lib/outreach/pure/velhoDemo";
 import type { RoleEmail, RoleEmailStatus, SocialLink } from "@/types/outreach";
 
 interface EmailCardProps {
@@ -112,6 +113,7 @@ export default function EmailCard({
   };
 
   const gmailTo = shown.recipient.email || (dryRun ? inboxEmail : "") || "";
+  const liveToOskar = isVelhoLiveRecipient(shown.recipient.email, shown.videoUrl);
 
   const buttonClass =
     "inline-flex items-center gap-2 rounded-lg border border-velho-line px-3 py-2 text-xs text-zinc-200 hover:bg-velho-ink disabled:cursor-not-allowed disabled:opacity-40";
@@ -236,18 +238,20 @@ export default function EmailCard({
         <button
           type="button"
           onClick={send}
-          disabled={sending || optedOut || (!dryRun && !adminSecret)}
+          disabled={sending || optedOut || (!dryRun && !liveToOskar && !adminSecret)}
           title={
-            dryRun
-              ? "Sends this draft from your Gmail to your own inbox"
-              : adminSecret
-                ? "Send to the real recipient"
-                : "Enter the admin secret above to send to the real recipient"
+            liveToOskar
+              ? "Sends this draft to oskar@velho.io"
+              : dryRun
+                ? "Sends this draft from your Gmail to your own inbox"
+                : adminSecret
+                  ? "Send to the real recipient"
+                  : "Enter the admin secret above to send to the real recipient"
           }
           className={buttonClass}
         >
           <Send className="h-3.5 w-3.5" />
-          {sending ? "Sending…" : dryRun ? "Send to my inbox" : "Send"}
+          {sending ? "Sending…" : liveToOskar || !dryRun ? "Send" : "Send to my inbox"}
         </button>
         <ShareChannelsButton
           companyName={companyName}

@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 
+import { isVelhoLiveRecipient } from "@/lib/outreach/pure/velhoDemo";
 import { readSenderConfig, resolveSender } from "@/lib/outreach/senders";
 import { getOutreachStore, tokenKey } from "@/lib/outreach/store";
 import type { RoleEmail, RoleEmailStatus } from "@/types/outreach";
@@ -16,7 +17,8 @@ import type { RoleEmail, RoleEmailStatus } from "@/types/outreach";
  *   2. The recipient must not be on the do-not-contact list.
  *   3. The daily per-inbox limit must not be reached.
  *   4. Gmail (GMAIL_APP_PASSWORD) or Resend (RESEND_API_KEY) must be configured.
- *   5. OUTREACH_DRY_RUN (default true) redirects to OUTREACH_TEST_EMAIL.
+ *   5. OUTREACH_DRY_RUN (default true) redirects to OUTREACH_TEST_EMAIL,
+ *      except oskar@velho.io on a velho.io video (the live pitch).
  * Hackathon rule: real companies are never contacted without Velho's OK.
  */
 
@@ -94,6 +96,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!email) return json(404, { error: "Unknown email token." });
 
   const address = email.recipient.email;
+  const liveToOskar = isVelhoLiveRecipient(address, email.videoUrl);
   if ((address && store.isDoNotContact(address)) || store.isDoNotContact(tokenKey(token))) {
     store.setEmailStatus(token, "opted_out");
     return json(409, { error: "Recipient has opted out.", status: "opted_out" });
@@ -112,7 +115,9 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   let to: string;
-  if (config.dryRun) {
+  if (liveToOskar) {
+    to = address as string;
+  } else if (config.dryRun) {
     if (!config.testEmail) {
       return json(400, { error: "Dry run needs OUTREACH_TEST_EMAIL (the team's test inbox)." });
     }
@@ -122,12 +127,12 @@ export async function POST(request: Request): Promise<Response> {
     to = address;
   }
 
-  const result = await sender.send({ email, to, dryRun: config.dryRun });
+  const result = await sender.send({ email, to, dryRun: config.dryRun && !liveToOskar });
   if (!result.ok) {
     return json(502, { error: result.error ?? "Send failed", provider: result.provider });
   }
 
-  const status: RoleEmailStatus = config.dryRun ? "dry_run_sent" : "sent";
+  const status: RoleEmailStatus = config.dryRun && !liveToOskar ? "dry_run_sent" : "sent";
   store.recordSend();
   store.setEmailStatus(token, status);
   return json(200, { status, deliveredTo: to, provider: result.provider, id: result.id });
